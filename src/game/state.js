@@ -6,6 +6,10 @@ import { LEAGUES, REAL_CLUBS, TROPHIES, NAME_POOLS, getLeague } from '../data/wo
 import { generateLeagueClubs, generateClubRoster, generateInternationalFixtures, generateSeasonFixtures, selectContinentalOpponents, pick, rand, clamp, chance } from '../engine/generator.js';
 import { POSITION_STATS, calcOVR, groupOf } from '../engine/sim.js';
 import { initSocialState, payWeeklyWage, generateWeeklyMediaActivity, processPendingPostComments, evaluateSeasonAwards } from '../engine/social.js';
+import { nextDay, addDays, compareDate, sameDate, dateLabel, daysBetween, isSeasonEnd } from '../engine/calendar.js';
+import { scheduleSeasonDecisions, getDecisionTemplate, applyDecisionEffect } from '../engine/decisions.js';
+import { generateDiverseOffers } from '../engine/offers.js';
+import { NATIONAL_TOURNAMENTS, NATION_TO_CONF } from '../data/tournaments.js';
 
 const SAVE_KEY = 'wfl_save_v1';
 const DATE_FORMAT = (year, week) => {
@@ -84,8 +88,9 @@ export const game = {
       history: [] // 시즌별 요약
     };
 
+    const seasonStartDate = { year: 2026, month: 8, day: 1 };
     const continentalOpps = selectContinentalOpponents(startClub, world.clubs, getLeague(startLeagueId).conf);
-    const fixtures = generateSeasonFixtures(player, clubs, continentalOpps);
+    const fixtures = generateSeasonFixtures(player, clubs, continentalOpps, seasonStartDate);
 
     // 첫 시즌 상태
     const season = makeSeasonState(player, clubs, fixtures);
@@ -96,68 +101,74 @@ export const game = {
       events: [],
       year: 2026,
       week: 1,
+      calendar: { ...seasonStartDate },
+      scheduledEvents: scheduleSeasonDecisions(seasonStartDate),
       offers: [],
+      pendingDecision: null,
+      flags: {},
       social: initSocialState(player)
     };
     return this.state;
   },
 
   advance() {
-    // 한 주 진행 (return: 발생한 이벤트들)
+    // 일별 진행: 오늘 이벤트 있으면 반환, 없으면 1일 전진. 최대 30일 (또는 이벤트 만날 때까지)
     const s = this.state;
     if (!s) return { error: 'no_state' };
-    if (s.player.retired) return { error: 'retired' };
-    const events = [];
 
-    // 부상 회복
-    if (s.player.injury > 0) {
-      s.player.injury = Math.max(0, s.player.injury - 1);
-    }
+    let daysAdvanced = 0;
+    let lastWeek = s.week;
 
-    // 다음 일정 가져오기
-    const week = s.season.fixtures.find(f => f.week === s.week);
-    if (!week) {
-      // 시즌 종료
-      return this.endSeason();
-    }
+    for (let safety = 0; safety < 60; safety++) {
+      // 오늘 이벤트 수집
+      const todayEvents = collectTodayEvents(s);
+      if (todayEvents.length > 0) {
+        return { events: todayEvents, daysAdvanced, currentDate: { ...s.calendar } };
+      }
 
-    // 국제 휴식 주
-    if (week.events && week.events.some(e => e.type === 'international_break')) {
-      // 국가대표 친선/예선 1경기 (OVR 75+ 차출)
-      const ovr = calcOVR(s.player);
-      if (ovr >= 70 && !s.player.nationalRetired) {
-        const matches = generateInternationalFixtures(s.player.nationality, s.year);
-        const m = matches[0];
-        const fixture = { ...m, week: s.week };
-        events.push({ type: 'fixture', fixture });
-      } else {
-        events.push({ type: 'break', message: '국제 휴식 — 클럽 훈련 진행' });
+      // 시즌 종료 체크 (다음해 7월 31일 도달)
+      if (s.calendar.year > s.year || (s.calendar.year === s.year + 1 && s.calendar.month >= 7 && s.calendar.day >= 25)) {
+        return { events: [{ type: 'season_end' }], daysAdvanced, currentDate: { ...s.calendar } };
+      }
+
+      // 1일 전진
+      s.calendar = nextDay(s.calendar);
+      daysAdvanced++;
+
+      // 주차 업데이트 (시즌 시작일로부터 7일마다 +1주차)
+      const newWeek = computeWeekFromCalendar(s);
+      if (newWeek !== lastWeek) {
+        lastWeek = newWeek;
+        s.week = newWeek;
+        // 주차 전환 시 백그라운드 처리
+        if (s.player.injury > 0) s.player.injury = Math.max(0, s.player.injury - 1);
+        simulateOtherClubsLeagueRound(s);
+        payWeeklyWage(s);
+        processPendingPostComments(s).catch(() => {});
+        generateWeeklyMediaActivity(s).catch(() => {});
+      }
+
+      // 너무 길게 전진하지 않도록 (사용자 체감용)
+      if (daysAdvanced >= 14) {
+        return { events: [{ type: 'idle_period', days: daysAdvanced }], daysAdvanced, currentDate: { ...s.calendar } };
       }
     }
-
-    // 클럽 매치
-    week.matches.forEach(m => {
-      events.push({ type: 'fixture', fixture: { ...m, week: s.week } });
-    });
-
-    if (events.length === 0) events.push({ type: 'break', message: '경기 없는 주' });
-
-    // 다른 클럽들 백그라운드 시뮬 (본인 리그의 나머지 클럽들이 서로 경기)
-    simulateOtherClubsLeagueRound(s);
-
-    // 주급 지급
-    payWeeklyWage(s);
-
-    // SNS / 미디어 비동기 처리 (await 안 해도 됨 — 다음 주에 보이면 됨)
-    processPendingPostComments(s).catch(() => {});
-    generateWeeklyMediaActivity(s).catch(() => {});
-
-    return { events, week };
+    return { events: [{ type: 'idle_period', days: daysAdvanced }], daysAdvanced, currentDate: { ...s.calendar } };
   },
 
   finishWeek() {
-    // 매치 처리 후 주차 증가
-    this.state.week++;
+    // (캘린더 시스템에선 자동으로 진행되므로 호환용 빈 함수)
+  },
+
+  /* ---------- 결정 적용 ---------- */
+  applyDecision(decisionId, choiceIndex) {
+    const s = this.state;
+    const tpl = getDecisionTemplate(decisionId);
+    if (!tpl) return null;
+    const choice = tpl.choices[choiceIndex];
+    if (!choice) return null;
+    const log = applyDecisionEffect(s, choice.effect);
+    return { choice, log };
   },
 
   endSeason() {
@@ -243,8 +254,8 @@ export const game = {
     const seasonAwards = evaluateSeasonAwards(s, seasonReport);
     seasonReport.awards = seasonAwards;
 
-    // 이적 오퍼 생성
-    s.offers = generateTransferOffersImpl(s, avgRating);
+    // 이적 오퍼 생성 (다양화된 시스템: 5~15개, 다양한 유형)
+    s.offers = generateDiverseOffers(s, avgRating);
 
     // 자동 승강 처리 (선수 따라감)
     if (promoted) {
@@ -259,6 +270,7 @@ export const game = {
 
     // 새 시즌 준비
     s.week = 1;
+    s.calendar = { year: s.year, month: 8, day: 1 };
     const newLeague = getLeague(player.leagueId);
     const newClubs = s.world.clubs[player.leagueId];
     // 본인 클럽이 새 리그에 없으면, 새 클럽 추가 (강등/승격 시 클럽도 따라 이동)
@@ -271,8 +283,10 @@ export const game = {
     }
 
     const continentalOpps = (myRank <= newLeague.continentalSpots) ? selectContinentalOpponents(myClub, s.world.clubs, newLeague.conf) : [];
-    const fixtures = generateSeasonFixtures(player, newClubs, continentalOpps);
+    const fixtures = generateSeasonFixtures(player, newClubs, continentalOpps, s.calendar);
     s.season = makeSeasonState(player, newClubs, fixtures);
+    s.scheduledEvents = scheduleSeasonDecisions(s.calendar);
+    player.tournamentsThisSeason = [];
 
     return {
       seasonEnd: true,
@@ -302,9 +316,10 @@ export const game = {
     s.player.contractYears = offer.years;
     s.player.money += Math.round(offer.fee * 0.1); // 사이닝 보너스
 
-    // 새 일정 재생성
+    // 새 일정 재생성 (시즌 시작일 기준)
     const continentalOpps = selectContinentalOpponents(newClub, s.world.clubs, newLeague.conf);
-    const fixtures = generateSeasonFixtures(s.player, newClubs, continentalOpps);
+    const seasonStart = s.calendar || { year: s.year, month: 8, day: 1 };
+    const fixtures = generateSeasonFixtures(s.player, newClubs, continentalOpps, seasonStart);
     s.season = makeSeasonState(s.player, newClubs, fixtures);
 
     s.offers = [];
@@ -349,6 +364,72 @@ function makeSeasonState(player, clubs, fixtures) {
     ratings: [],
     trophiesWon: 0
   };
+}
+
+/* ---------- 캘린더에서 주차 계산 ---------- */
+function computeWeekFromCalendar(s) {
+  const start = { year: s.year, month: 8, day: 1 };
+  const days = daysBetween(start, s.calendar);
+  return Math.max(1, Math.floor(days / 7) + 1);
+}
+
+/* ---------- 오늘 발생할 이벤트 수집 ---------- */
+function collectTodayEvents(s) {
+  const today = s.calendar;
+  const events = [];
+
+  // 1. 매치 (시즌 fixtures)
+  s.season.fixtures.forEach(w => {
+    if (w.matches) {
+      w.matches.forEach(m => {
+        if (m.date && sameDate(m.date, today)) {
+          events.push({ type: 'fixture', fixture: { ...m } });
+        }
+      });
+    }
+  });
+
+  // 2. 결정 이벤트
+  s.scheduledEvents = s.scheduledEvents || [];
+  const decisionsToday = s.scheduledEvents.filter(e => e.type === 'decision' && sameDate(e.date, today));
+  decisionsToday.forEach(e => {
+    events.push({ type: 'decision', decisionId: e.decisionId, scheduledEvent: e });
+  });
+
+  // 3. 국제대회 (월드컵/올림픽/아시안컵 등 — 매월 1일에 발생 가능성 체크)
+  if (today.day === 1) {
+    const ovr = calcOVR(s.player);
+    if (ovr >= 70 && !s.player.nationalRetired) {
+      Object.entries(NATIONAL_TOURNAMENTS).forEach(([id, t]) => {
+        if (!t.months || !t.months.includes(today.month)) return;
+        const conf = NATION_TO_CONF[s.player.nationality];
+        if (t.conf && t.conf !== conf) return;
+        if (t.confs && !t.confs.includes(conf)) return;
+        if (t.eligibleNations && Array.isArray(t.eligibleNations) && !t.eligibleNations.includes(s.player.nationality)) return;
+
+        // 사이클 체크
+        if (t.nextYear) {
+          const diff = (today.year - t.nextYear) % t.cycle;
+          if (diff !== 0) return;
+        }
+
+        // U-23 나이 체크
+        if (t.ageMax && s.player.age > t.ageMax) {
+          // 와일드카드 가능성 (명성 높을 때)
+          if (!t.overage || ovr < 80) return;
+        }
+
+        // 이미 이번 시즌 이 대회 차출됐는지 체크
+        s.player.tournamentsThisSeason = s.player.tournamentsThisSeason || [];
+        if (s.player.tournamentsThisSeason.includes(id + '_' + today.year)) return;
+        s.player.tournamentsThisSeason.push(id + '_' + today.year);
+
+        events.push({ type: 'tournament_callup', tournament: { id, ...t }, date: { ...today } });
+      });
+    }
+  }
+
+  return events;
 }
 
 /* ---------- 본인 리그의 다른 클럽들 한 라운드 시뮬 ---------- */

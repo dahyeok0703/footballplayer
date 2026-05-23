@@ -3,6 +3,7 @@
  * ================================================================ */
 
 import { LEAGUES, REAL_CLUBS, NAME_POOLS, POOL_BY_CODE, getLeague } from '../data/world.js';
+import { addDays, getDayOfWeek } from './calendar.js';
 
 let _idCounter = 1;
 export function uid(prefix = 'id') { return `${prefix}_${_idCounter++}`; }
@@ -135,7 +136,21 @@ export function pickRandomNation() { return pick(ALL_NATIONS); }
 
 const INTERNATIONAL_WEEKS = [6, 11, 14, 19, 32, 38]; // 국가대표 차출 주간
 
-export function generateSeasonFixtures(player, clubsInLeague, opponentsContinental) {
+/* 주차 N에 해당하는 매치 날짜 계산 */
+function computeMatchDate(seasonStartDate, week, matchType) {
+  // week N의 시작일 = seasonStart + (N-1) * 7
+  const weekStart = addDays(seasonStartDate, (week - 1) * 7);
+  // weekStart의 요일을 기준으로 토/수/화 등에 매핑
+  const baseDow = getDayOfWeek(weekStart);
+  // 목표 요일: league=토(6), cup=수(3), continental=화(2), national=목(4)
+  const targetDow = { league: 6, cup: 3, continental: 2, national: 4 }[matchType] || 6;
+  let offset = targetDow - baseDow;
+  if (offset < 0) offset += 7;
+  return addDays(weekStart, offset);
+}
+
+export function generateSeasonFixtures(player, clubsInLeague, opponentsContinental, seasonStartDate) {
+  const seasonStart = seasonStartDate || { year: 2026, month: 8, day: 1 };
   /*
    *  returns array of weeks (1..50). 각 주에 매치 0~3개.
    *  match: { week, type, opp, oppName, oppStr, home, competition, round? }
@@ -244,6 +259,11 @@ export function generateSeasonFixtures(player, clubsInLeague, opponentsContinent
     } else if (leagueIdx < allLeagueFixtures.length) {
       wk.matches.push({ ...allLeagueFixtures[leagueIdx++], week: w });
     }
+
+    // 각 매치에 날짜 부여
+    wk.matches.forEach(m => {
+      m.date = computeMatchDate(seasonStart, w, m.type);
+    });
 
     weeks.push(wk);
   }

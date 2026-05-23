@@ -8,6 +8,8 @@ import { POSITION_STATS, STAT_NAMES, calcOVR, groupOf } from '../engine/sim.js';
 import { POSITIONS, NATIONALITY_LIST, DATING_POOL, INDIVIDUAL_AWARDS, statUpgradeCost, statUpgradeGain, getPosition } from '../data/extras.js';
 import { calcFame, userPostsTweet, getAvailablePartners, approachPartner, sendDatingMessage, setExclusive, breakUp, tryUpgradeStat } from '../engine/social.js';
 import { setApiKey, getApiKey, hasApiKey, clearApiKey, setModel, getModel } from '../engine/ai.js';
+import { dateLabel, shortDate, daysBetween, sameDate, compareDate } from '../engine/calendar.js';
+import { getDecisionTemplate } from '../engine/decisions.js';
 
 let currentView = 'hub';
 let trainAlloc = {};
@@ -118,11 +120,38 @@ export function refreshStatus() {
   $('status-age').textContent = `${p.age}세`;
   $('status-ovr').innerHTML = `OVR <strong>${ovr}</strong>/잠재 ${p.potential}`;
   $('status-money').textContent = `💰 ${p.money.toLocaleString()}만 €`;
-  $('status-date').textContent = DATE_FORMAT(s.year, s.week);
+  $('status-date').textContent = s.calendar ? dateLabel(s.calendar) : DATE_FORMAT(s.year, s.week);
 
-  // 부상이면 advance 버튼 라벨 변경
-  $('btn-advance').textContent = p.retired ? '은퇴' : '다음 ▶';
+  // 다음 이벤트 표시
+  const next = findNextEvent(s);
+  if (next && !p.retired) {
+    const daysUntil = daysBetween(s.calendar, next.date);
+    $('btn-advance').textContent = daysUntil === 0 ? `▶ ${next.label}` : `▶ ${daysUntil}일 진행 (${next.label})`;
+  } else {
+    $('btn-advance').textContent = p.retired ? '은퇴' : '▶ 진행';
+  }
   $('btn-advance').disabled = p.retired;
+}
+
+/* ---------- 다음 이벤트 찾기 (날짜 + 라벨) ---------- */
+function findNextEvent(s) {
+  if (!s.calendar) return null;
+  const today = s.calendar;
+  const candidates = [];
+  s.season.fixtures.forEach(w => {
+    if (w.matches) w.matches.forEach(m => {
+      if (m.date && compareDate(m.date, today) >= 0) {
+        candidates.push({ date: m.date, label: `${m.type === 'league' ? '리그' : m.type === 'cup' ? '컵' : m.type === 'continental' ? '대륙간' : '국대'} vs ${m.oppName}` });
+      }
+    });
+  });
+  (s.scheduledEvents || []).forEach(e => {
+    if (compareDate(e.date, today) >= 0) {
+      candidates.push({ date: e.date, label: '결정 이벤트' });
+    }
+  });
+  candidates.sort((a, b) => compareDate(a.date, b.date));
+  return candidates[0];
 }
 
 /* ---------- 뷰 라우터 ---------- */
@@ -224,9 +253,10 @@ function fixtureCardHtml(m, future = false) {
   const badgeClass = { league: 'league', cup: 'cup', continental: 'cont', national: 'nat' }[m.type] || 'league';
   const badgeText = { league: '리그', cup: '컵', continental: '대륙간', national: '국대' }[m.type];
   const ha = m.home ? '🏠' : '✈️';
+  const dateStr = m.date ? shortDate(m.date) : `W${m.week}`;
   return `<div class="fixture ${future ? 'next' : ''}">
     <span class="badge ${badgeClass}">${badgeText}</span>
-    <span>W${m.week} ${ha} vs ${m.oppName || m.opp || '-'} <small class="text-muted">${m.round || ''}</small></span>
+    <span>${dateStr} ${ha} vs ${m.oppName || m.opp || '-'} <small class="text-muted">${m.round || ''}</small></span>
     <span></span>
   </div>`;
 }
@@ -1130,3 +1160,148 @@ function renderSettings() {
     if (confirm('저장 데이터를 삭제하시겠습니까?')) game.clearSave();
   };
 }
+
+/* ============================================================
+ *  결정 모달
+ * ============================================================ */
+export function showDecisionModal(decisionId, callback) {
+  const tpl = getDecisionTemplate(decisionId);
+  if (!tpl) { callback && callback(); return; }
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:560px;">
+      <h3>${escapeHtml(tpl.title)}</h3>
+      <p style="margin:12px 0; line-height:1.6;">${escapeHtml(tpl.text)}</p>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">
+        ${tpl.choices.map((c, i) => `
+          <button class="decision-choice" data-idx="${i}" style="text-align:left; padding:10px 14px;">
+            <strong>${i+1}.</strong> ${escapeHtml(c.text)}
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('.decision-choice').forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx);
+      const res = game.applyDecision(decisionId, idx);
+      document.body.removeChild(overlay);
+      if (res && res.log) {
+        game.log_(`🎯 [${tpl.title}] "${res.choice.text}" → ${res.log.join(', ')}`, 'event');
+      }
+      refreshStatus();
+      callback && callback();
+    };
+  });
+}
+
+/* ============================================================
+ *  토너먼트 차출 모달
+ * ============================================================ */
+export function showTournamentCallupModal(ev, callback) {
+  const t = ev.tournament;
+  const isU23 = t.ageMax === 23;
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:520px;">
+      <h3>🇰🇷 국가대표 차출</h3>
+      <p style="font-size:1.1rem; margin:12px 0;"><strong>${escapeHtml(t.name)}</strong></p>
+      ${isU23 ? '<p class="hint">⚠ U-23 대회 (와일드카드 가능)</p>' : ''}
+      <p>명예: ${t.prestige}</p>
+      <p>차출 기간: 약 3~4주 (대회 진행 후 복귀)</p>
+      <div class="actions" style="margin-top:18px;">
+        <button class="primary" id="callup-yes">참가한다</button>
+        <button id="callup-no">거부 (다음 시즌 차출 가능성 감소)</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('callup-yes').onclick = () => {
+    document.body.removeChild(overlay);
+    callback(true);
+  };
+  document.getElementById('callup-no').onclick = () => {
+    document.body.removeChild(overlay);
+    callback(false);
+  };
+}
+
+/* ============================================================
+ *  이적 오퍼 뷰 업데이트 (다양화된 정보 표시)
+ * ============================================================ */
+// renderTransfers 재정의 (기존 함수 오버라이드)
+const _originalRenderTransfers = VIEWS.transfers;
+VIEWS.transfers = function renderTransfersExt() {
+  const s = game.state;
+  if (!s.offers || s.offers.length === 0) {
+    main().innerHTML = `
+      <div class="card">
+        <h3>이적 시장</h3>
+        <p class="hint">현재 들어온 이적 제안이 없습니다.</p>
+        <p>시즌 종료 시 활약/나이/포지션에 따라 다양한 오퍼가 도착합니다.</p>
+        <ul style="margin-top:10px; padding-left:20px; line-height:1.7;">
+          <li>🌟 <strong>주축 영입</strong>: OVR ≥ 78 + 평점 7.0+</li>
+          <li>🌱 <strong>유망주 영입</strong>: 21세 이하 + 잠재력 75+ → 빅클럽 프로스펙트</li>
+          <li>🏆 <strong>베테랑 백업</strong>: 30세+ + OVR 73+ → 빅클럽 백업/멘토</li>
+          <li>📋 <strong>임대</strong>: 출전 부족 시 발전 기회</li>
+          <li>💰 <strong>자금력 리그</strong>: 사우디/MLS/중국 빅 머니 오퍼</li>
+        </ul>
+      </div>`;
+    return;
+  }
+  main().innerHTML = `
+    <div class="card">
+      <h3>이적 오퍼 (${s.offers.length}건)</h3>
+      <p class="hint">각 오퍼는 역할/주급/계약기간/사유가 다릅니다. 본인 상황에 맞게 선택하세요.</p>
+      ${s.offers.map(o => `
+        <div class="offer-card">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:6px;">
+            <div>
+              <strong>${escapeHtml(o.clubName)}</strong>
+              <span class="text-muted">(${escapeHtml(o.leagueName)} · 강도 ${o.leagueStrength})</span>
+            </div>
+            <span class="badge cont">${escapeHtml(o.roleLabel)}</span>
+          </div>
+          <p style="font-size:0.85rem; margin-top:6px; color:var(--accent-3);">${escapeHtml(o.roleDescription)}</p>
+          <p style="font-size:0.83rem; color:var(--muted); margin-top:4px;">💡 ${escapeHtml(o.reason)}</p>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px; margin-top:8px; font-size:0.85rem;">
+            <p>이적료: <strong>${o.freeTransfer ? '자유 계약' : o.fee.toLocaleString() + '만 €'}</strong></p>
+            <p>주급: <strong>${o.wage.toLocaleString()}만 €</strong></p>
+            <p>계약: <strong>${o.years}년${o.isLoan ? ' 임대' : ''}</strong></p>
+            <p>사이닝: <strong>${o.signOn.toLocaleString()}만 €</strong></p>
+          </div>
+          <div class="actions">
+            <button class="primary" data-accept-ext="${o.id}">수락</button>
+            <button data-reject-ext="${o.id}">거절</button>
+          </div>
+        </div>
+      `).join('')}
+      <button id="btn-reject-all-ext">모두 거절 (잔류)</button>
+    </div>
+  `;
+  document.querySelectorAll('[data-accept-ext]').forEach(b => {
+    b.onclick = () => {
+      const id = parseInt(b.dataset.acceptExt);
+      const offer = game.acceptOffer(id);
+      if (offer) {
+        game.log_(`✍️ ${offer.clubName} 이적 (${offer.roleLabel}, 주급 ${offer.wage}만 €)`, 'good');
+        refreshStatus();
+        renderView('hub');
+      }
+    };
+  });
+  document.querySelectorAll('[data-reject-ext]').forEach(b => {
+    b.onclick = () => {
+      const id = parseInt(b.dataset.rejectExt);
+      s.offers = s.offers.filter(o => o.id !== id);
+      renderView('transfers');
+    };
+  });
+  document.getElementById('btn-reject-all-ext').onclick = () => {
+    s.offers = [];
+    renderView('hub');
+  };
+};
