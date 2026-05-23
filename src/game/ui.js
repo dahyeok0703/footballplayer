@@ -23,8 +23,9 @@ export function renderStart() {
   $('status-bar').classList.add('hidden');
 
   main().innerHTML = `
-    <h2>새로운 커리어</h2>
-    <div class="form">
+    <h2>새로운 커리어 생성</h2>
+    <div class="form" style="max-width:600px;">
+      <h4>기본 정보</h4>
       <label>이름
         <input type="text" id="in-name" placeholder="홍길동" maxlength="20">
       </label>
@@ -33,6 +34,16 @@ export function renderStart() {
           ${NATIONALITY_LIST.map(n => `<option value="${n.code}">${n.flag} ${n.name}</option>`).join('')}
         </select>
       </label>
+
+      <h4 style="margin-top:8px;">신체 정보</h4>
+      <label>키 (cm)
+        <input type="number" id="in-height" min="160" max="210" value="178">
+      </label>
+      <label>몸무게 (kg)
+        <input type="number" id="in-weight" min="55" max="110" value="72">
+      </label>
+
+      <h4 style="margin-top:8px;">기술 정보</h4>
       <label>주발
         <select id="in-foot">
           <option value="오른발">오른발</option>
@@ -40,18 +51,42 @@ export function renderStart() {
           <option value="양발">양발</option>
         </select>
       </label>
+      <label>약발 수준 (1=약함, 5=강함 — 양발 수준)
+        <select id="in-weakfoot">
+          <option value="1">★☆☆☆☆ (1)</option>
+          <option value="2">★★☆☆☆ (2)</option>
+          <option value="3" selected>★★★☆☆ (3)</option>
+          <option value="4">★★★★☆ (4)</option>
+          <option value="5">★★★★★ (5)</option>
+        </select>
+      </label>
+      <label>스킬무브 수준 (드리블/페인팅 기교)
+        <select id="in-skill-moves">
+          <option value="1">★☆☆☆☆ (1)</option>
+          <option value="2">★★☆☆☆ (2)</option>
+          <option value="3" selected>★★★☆☆ (3)</option>
+          <option value="4">★★★★☆ (4)</option>
+          <option value="5">★★★★★ (5)</option>
+        </select>
+      </label>
+
+      <h4 style="margin-top:8px;">포지션 & 재능</h4>
       <label>포지션 (세부)
         <select id="in-pos">
           ${POSITIONS.map(p => `<option value="${p.id}"${p.id === 'CAM' ? ' selected' : ''}>${p.name} (${p.short})</option>`).join('')}
         </select>
       </label>
-      <label>재능
-        <div style="display:flex; align-items:center; justify-content:space-between; padding:8px; background:var(--bg-2); border-radius:6px;">
-          <span id="talent-display" style="color:var(--accent-2); font-size:1.1rem; letter-spacing:2px;">★★★☆☆</span>
-          <button type="button" id="btn-reroll">다시 굴리기 (3회)</button>
-        </div>
+      <label>재능 (직접 선택)
+        <select id="in-talent">
+          <option value="1">★☆☆☆☆ (1) — 평범한 재능 / 잠재력 ~70</option>
+          <option value="2">★★☆☆☆ (2) — 나쁘지 않은 재능 / 잠재력 ~75</option>
+          <option value="3" selected>★★★☆☆ (3) — 평균 재능 / 잠재력 ~80</option>
+          <option value="4">★★★★☆ (4) — 우수한 재능 / 잠재력 ~85</option>
+          <option value="5">★★★★★ (5) — 세계적 재능 / 잠재력 ~92</option>
+        </select>
       </label>
-      <div style="display:flex; gap:8px;">
+
+      <div style="display:flex; gap:8px; margin-top:14px;">
         <button id="btn-create" class="primary" style="flex:1;">커리어 시작 (만 16세)</button>
         <button id="btn-load">💾 저장 불러오기</button>
       </div>
@@ -59,28 +94,20 @@ export function renderStart() {
     <p class="hint">현실 데이터 기반 · 200+ 리그 · 세계 클럽 · 6대륙 트로피</p>
   `;
 
-  let talent = rollTalent();
-  let rerolls = 3;
-  const updateTalent = () => {
-    $('talent-display').textContent = '★'.repeat(talent) + '☆'.repeat(5 - talent);
-    $('btn-reroll').textContent = `다시 굴리기 (${rerolls}회)`;
-    $('btn-reroll').disabled = rerolls <= 0;
-  };
-  updateTalent();
-  $('btn-reroll').onclick = () => {
-    if (rerolls <= 0) return;
-    rerolls--;
-    talent = rollTalent();
-    updateTalent();
-  };
   $('btn-create').onclick = () => {
     const name = $('in-name').value.trim() || '이름없음';
+    const height = parseInt($('in-height').value) || 178;
+    const weight = parseInt($('in-weight').value) || 72;
+    const weakFoot = parseInt($('in-weakfoot').value) || 3;
+    const skillMoves = parseInt($('in-skill-moves').value) || 3;
+    const talent = parseInt($('in-talent').value) || 3;
     game.newCareer({
       name,
       nationality: $('in-nation').value,
       foot: $('in-foot').value,
       position: $('in-pos').value,
-      talent
+      talent,
+      height, weight, weakFoot, skillMoves
     });
     showGame();
   };
@@ -91,15 +118,6 @@ export function renderStart() {
       alert('저장된 게임이 없습니다.');
     }
   };
-}
-
-function rollTalent() {
-  const r = Math.random();
-  if (r < 0.05) return 1;
-  if (r < 0.30) return 2;
-  if (r < 0.70) return 3;
-  if (r < 0.95) return 4;
-  return 5;
 }
 
 export function showGame() {
@@ -302,7 +320,9 @@ function renderPlayer() {
       </div>
 
       <div class="card">
-        <h3>계약 / 사기</h3>
+        <h3>신체 / 계약</h3>
+        <p>키 / 몸무게: <strong>${p.height || 178}cm / ${p.weight || 72}kg</strong></p>
+        <p>주발: <strong>${p.foot}</strong> · 약발 ${'★'.repeat(p.weakFoot || 3)}${'☆'.repeat(5 - (p.weakFoot || 3))} · 스킬무브 ${'★'.repeat(p.skillMoves || 3)}${'☆'.repeat(5 - (p.skillMoves || 3))}</p>
         <p>클럽: <strong>${p.clubName}</strong></p>
         <p>리그: ${getLeague(p.leagueId).name}</p>
         <p>나이: ${p.age}세 · 재능 ${'★'.repeat(p.talent)}${'☆'.repeat(5 - p.talent)}</p>

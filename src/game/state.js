@@ -36,7 +36,7 @@ export const game = {
 
   /* ---------- 새 커리어 시작 ---------- */
   newCareer(opts) {
-    const { name, nationality, foot, position, talent } = opts;
+    const { name, nationality, foot, position, talent, height = 178, weight = 72, weakFoot = 3, skillMoves = 3 } = opts;
 
     // 모든 리그 클럽 생성
     const world = { clubs: {}, leagueTables: {}, leagueChampions: {}, tournaments: {} };
@@ -69,6 +69,7 @@ export const game = {
     const player = {
       id: 'me',
       name, nationality, foot, position, talent,
+      height, weight, weakFoot, skillMoves,
       age: 16, birthYear: 2010,
       stats, potential,
       clubId: startClub.id,
@@ -112,41 +113,33 @@ export const game = {
   },
 
   advance() {
-    // 일별 진행: 오늘 이벤트 있으면 반환, 없으면 1일 전진. 최대 30일 (또는 이벤트 만날 때까지)
     const s = this.state;
     if (!s) return { error: 'no_state' };
 
+    // 직전 호출에서 오늘 이벤트를 반환했다면, 먼저 하루 전진 (반복 방지)
+    if (s._lastEventDate && sameDate(s._lastEventDate, s.calendar)) {
+      advanceOneDay(s);
+      s._lastEventDate = null;
+    }
+
     let daysAdvanced = 0;
-    let lastWeek = s.week;
 
-    for (let safety = 0; safety < 60; safety++) {
-      // 오늘 이벤트 수집
-      const todayEvents = collectTodayEvents(s);
-      if (todayEvents.length > 0) {
-        return { events: todayEvents, daysAdvanced, currentDate: { ...s.calendar } };
-      }
-
-      // 시즌 종료 체크 (다음해 7월 31일 도달)
+    for (let safety = 0; safety < 365; safety++) {
+      // 시즌 종료 체크 (다음해 7월 25일+ 도달)
       if (s.calendar.year > s.year || (s.calendar.year === s.year + 1 && s.calendar.month >= 7 && s.calendar.day >= 25)) {
         return { events: [{ type: 'season_end' }], daysAdvanced, currentDate: { ...s.calendar } };
       }
 
-      // 1일 전진
-      s.calendar = nextDay(s.calendar);
-      daysAdvanced++;
-
-      // 주차 업데이트 (시즌 시작일로부터 7일마다 +1주차)
-      const newWeek = computeWeekFromCalendar(s);
-      if (newWeek !== lastWeek) {
-        lastWeek = newWeek;
-        s.week = newWeek;
-        // 주차 전환 시 백그라운드 처리
-        if (s.player.injury > 0) s.player.injury = Math.max(0, s.player.injury - 1);
-        simulateOtherClubsLeagueRound(s);
-        payWeeklyWage(s);
-        processPendingPostComments(s).catch(() => {});
-        generateWeeklyMediaActivity(s).catch(() => {});
+      // 오늘 이벤트 수집
+      const todayEvents = collectTodayEvents(s);
+      if (todayEvents.length > 0) {
+        s._lastEventDate = { ...s.calendar };
+        return { events: todayEvents, daysAdvanced, currentDate: { ...s.calendar } };
       }
+
+      // 1일 전진
+      advanceOneDay(s);
+      daysAdvanced++;
 
       // 너무 길게 전진하지 않도록 (사용자 체감용)
       if (daysAdvanced >= 14) {
@@ -371,6 +364,20 @@ function computeWeekFromCalendar(s) {
   const start = { year: s.year, month: 8, day: 1 };
   const days = daysBetween(start, s.calendar);
   return Math.max(1, Math.floor(days / 7) + 1);
+}
+
+/* ---------- 하루 전진 (주차 변경 시 백그라운드 처리) ---------- */
+function advanceOneDay(s) {
+  s.calendar = nextDay(s.calendar);
+  const newWeek = computeWeekFromCalendar(s);
+  if (newWeek !== s.week) {
+    s.week = newWeek;
+    if (s.player.injury > 0) s.player.injury = Math.max(0, s.player.injury - 1);
+    simulateOtherClubsLeagueRound(s);
+    payWeeklyWage(s);
+    processPendingPostComments(s).catch(() => {});
+    generateWeeklyMediaActivity(s).catch(() => {});
+  }
 }
 
 /* ---------- 오늘 발생할 이벤트 수집 ---------- */

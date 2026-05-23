@@ -34,10 +34,14 @@ async function playButton() {
     return;
   }
 
+  // 일자 흐름 로그 (며칠이 지났는지 보이게)
+  if (result.daysAdvanced > 0) {
+    game.log_(`📅 ${result.daysAdvanced}일 경과 → ${dateLabel(result.currentDate)}`, '');
+  }
+
   // idle period 처리 (이벤트 없이 14일 흐름)
   const idle = result.events.find(e => e.type === 'idle_period');
   if (idle) {
-    game.log_(`📅 ${idle.days}일 경과 — ${dateLabel(result.currentDate)}`, '');
     busy = false;
     refreshAndRender();
     return;
