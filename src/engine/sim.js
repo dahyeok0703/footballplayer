@@ -6,6 +6,17 @@
 import { LEAGUES, getLeague, TROPHIES } from '../data/world.js';
 import { rand, pick, clamp, chance, gauss, generateClubRoster, generatePlayer, generateLeagueClubs } from './generator.js';
 
+/* ---------- 서브 포지션 → 능력치 그룹 ---------- */
+const SUB_TO_GROUP = {
+  GK: 'GK',
+  CB: 'DF', LB: 'DF', RB: 'DF', LWB: 'DF', RWB: 'DF',
+  CDM: 'MF', CM: 'MF', CAM: 'MF', LM: 'MF', RM: 'MF',
+  LW: 'FW', RW: 'FW', SS: 'FW', CF: 'FW', ST: 'FW',
+  // 그룹 그대로
+  DF: 'DF', MF: 'MF', FW: 'FW'
+};
+export function groupOf(pos) { return SUB_TO_GROUP[pos] || pos; }
+
 /* ---------- 포지션별 능력치 가중치 (OVR 계산) ---------- */
 export const POSITION_WEIGHTS = {
   GK: { reflex: 0.30, handling: 0.25, positioning: 0.20, kicking: 0.10, speed: 0.05, mental: 0.10 },
@@ -28,9 +39,9 @@ export const POSITION_STATS = {
 };
 
 export function calcOVR(player) {
-  const w = POSITION_WEIGHTS[player.position];
+  const w = POSITION_WEIGHTS[groupOf(player.position)] || POSITION_WEIGHTS.MF;
   let ovr = 0;
-  for (const [stat, weight] of Object.entries(w)) ovr += player.stats[stat] * weight;
+  for (const [stat, weight] of Object.entries(w)) ovr += (player.stats[stat] || 50) * weight;
   return Math.round(ovr);
 }
 
@@ -55,18 +66,20 @@ export function simulateMatch(player, fixture) {
   if (myGoals > 0) {
     const goalChance = {
       FW: 0.45, MF: 0.25, DF: 0.08, GK: 0.001
-    }[player.position];
+    }[groupOf(player.position)];
     for (let i = 0; i < myGoals; i++) {
       if (chance(goalChance + (myOVR - 60) / 200)) goals++;
       else if (chance(0.3)) assists++;
     }
-    if (player.position === 'MF' || player.position === 'FW') {
+    const _grp = groupOf(player.position);
+    if (_grp === 'MF' || _grp === 'FW') {
       if (chance(0.35) && assists < myGoals) assists++;
     }
   }
 
   rating += goals * 0.5 + assists * 0.25;
-  if (oppGoals === 0 && (player.position === 'GK' || player.position === 'DF')) rating += 0.4;
+  const _grp2 = groupOf(player.position);
+  if (oppGoals === 0 && (_grp2 === 'GK' || _grp2 === 'DF')) rating += 0.4;
   if (myGoals < oppGoals) rating -= 0.3;
   rating = clamp(parseFloat(rating.toFixed(1)), 3.0, 10.0);
 
@@ -177,7 +190,7 @@ export function ageGrowthFactor(age, position) {
 }
 
 export function applyTraining(player, trainAlloc) {
-  const ageFactor = ageGrowthFactor(player.age, player.position);
+  const ageFactor = ageGrowthFactor(player.age, groupOf(player.position));
   const talentFactor = 0.5 + player.talent * 0.25;
   const ovr = calcOVR(player);
   const potentialGap = player.potential - ovr;
@@ -193,9 +206,9 @@ export function applyTraining(player, trainAlloc) {
 }
 
 export function applyAging(player) {
-  const af = ageGrowthFactor(player.age, player.position);
+  const af = ageGrowthFactor(player.age, groupOf(player.position));
   if (af >= 0) return;
-  POSITION_STATS[player.position].forEach(stat => {
+  POSITION_STATS[groupOf(player.position)].forEach(stat => {
     let drop = -af * (0.5 + Math.random() * 1.2);
     if (stat === 'speed' || stat === 'physical') drop *= 1.5;
     if (stat === 'mental' || stat === 'passing' || stat === 'positioning') drop *= 0.4;
@@ -298,7 +311,7 @@ export function recordMatch(state, fixture, result) {
 
   // 경기 경험 성장
   if (result.growthBonus > 0 && state.player.age < 30) {
-    const s = pick(POSITION_STATS[state.player.position]);
+    const s = pick(POSITION_STATS[groupOf(state.player.position)]);
     if (state.player.stats[s] < state.player.potential) {
       state.player.stats[s] = clamp(state.player.stats[s] + 1, 1, 99);
     }

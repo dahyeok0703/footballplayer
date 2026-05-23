@@ -4,7 +4,8 @@
 
 import { LEAGUES, REAL_CLUBS, TROPHIES, NAME_POOLS, getLeague } from '../data/world.js';
 import { generateLeagueClubs, generateClubRoster, generateInternationalFixtures, generateSeasonFixtures, selectContinentalOpponents, pick, rand, clamp, chance } from '../engine/generator.js';
-import { POSITION_STATS, calcOVR } from '../engine/sim.js';
+import { POSITION_STATS, calcOVR, groupOf } from '../engine/sim.js';
+import { initSocialState, payWeeklyWage, generateWeeklyMediaActivity, processPendingPostComments, evaluateSeasonAwards } from '../engine/social.js';
 
 const SAVE_KEY = 'wfl_save_v1';
 const DATE_FORMAT = (year, week) => {
@@ -57,7 +58,7 @@ export const game = {
     Object.keys({ speed: 1, shooting: 1, passing: 1, dribbling: 1, defending: 1, physical: 1, mental: 1, reflex: 1, handling: 1, positioning: 1, kicking: 1 }).forEach(k => {
       stats[k] = rand(35, 50);
     });
-    POSITION_STATS[position].forEach(k => stats[k] += rand(5, 12));
+    POSITION_STATS[groupOf(position)].forEach(k => stats[k] += rand(5, 12));
 
     const potential = clamp(60 + talent * 6 + rand(-3, 5), 55, 99);
 
@@ -95,7 +96,8 @@ export const game = {
       events: [],
       year: 2026,
       week: 1,
-      offers: []
+      offers: [],
+      social: initSocialState(player)
     };
     return this.state;
   },
@@ -142,6 +144,13 @@ export const game = {
 
     // 다른 클럽들 백그라운드 시뮬 (본인 리그의 나머지 클럽들이 서로 경기)
     simulateOtherClubsLeagueRound(s);
+
+    // 주급 지급
+    payWeeklyWage(s);
+
+    // SNS / 미디어 비동기 처리 (await 안 해도 됨 — 다음 주에 보이면 됨)
+    processPendingPostComments(s).catch(() => {});
+    generateWeeklyMediaActivity(s).catch(() => {});
 
     return { events, week };
   },
@@ -229,6 +238,10 @@ export const game = {
     player.age++;
     s.year++;
     applyAgingToPlayer(player);
+
+    // 시즌 종료 개인상 평가 (발롱도르, 골든부트, 푸스카스 등 모두)
+    const seasonAwards = evaluateSeasonAwards(s, seasonReport);
+    seasonReport.awards = seasonAwards;
 
     // 이적 오퍼 생성
     s.offers = generateTransferOffersImpl(s, avgRating);
@@ -465,7 +478,7 @@ function applyAgingToPlayer(player) {
   else af = -1.8;
 
   if (af < 0) {
-    POSITION_STATS[pos].forEach(stat => {
+    POSITION_STATS[groupOf(pos)].forEach(stat => {
       let drop = -af * (0.5 + Math.random() * 1.2);
       if (stat === 'speed' || stat === 'physical') drop *= 1.5;
       if (stat === 'mental' || stat === 'passing' || stat === 'positioning') drop *= 0.4;

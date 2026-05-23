@@ -5,6 +5,7 @@
 import { game } from './game/state.js';
 import { renderStart, renderView, refreshStatus, showGame, showMatchModal, showSeasonEndModal, renderEnd, getTrainAlloc } from './game/ui.js';
 import { simulateMatch, recordMatch, applyTraining, calcOVR } from './engine/sim.js';
+import { applyPerMatchGrowth } from './engine/social.js';
 
 let busy = false;
 
@@ -64,6 +65,14 @@ function advanceWeek() {
     const f = fixtures[idx++];
     const result = simulateMatch(s.player, f);
     recordMatch(game.state, f, result);
+    // 평점 기반 즉시 능력치 성장/하락
+    const gains = applyPerMatchGrowth(game.state, f, result);
+    if (gains && gains.length > 0) {
+      const up = gains.filter(g => g.change > 0).length;
+      const down = gains.filter(g => g.change < 0).length;
+      if (up > 0) game.log_(`📈 평점 ${result.rating} → 능력치 +${up}`, 'good');
+      if (down > 0) game.log_(`📉 부진으로 능력치 -${down}`, 'bad');
+    }
     const cls = result.result === 'W' ? 'good' : (result.result === 'L' ? 'bad' : 'event');
     game.log_(`⚽ W${f.week} ${f.type === 'league' ? '리그' : (f.type === 'cup' ? '컵' : (f.type === 'continental' ? '대륙간' : '국대'))} vs ${f.oppName} ${result.myGoals}-${result.oppGoals} (${result.result}) 평점 ${result.rating}`, cls);
     showMatchModal(f, result, processNext);

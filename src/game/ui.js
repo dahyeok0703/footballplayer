@@ -4,7 +4,10 @@
 
 import { LEAGUES, NAME_POOLS, getLeague, TROPHIES, CONFEDERATIONS } from '../data/world.js';
 import { game, DATE_FORMAT } from './state.js';
-import { POSITION_STATS, STAT_NAMES, calcOVR } from '../engine/sim.js';
+import { POSITION_STATS, STAT_NAMES, calcOVR, groupOf } from '../engine/sim.js';
+import { POSITIONS, NATIONALITY_LIST, DATING_POOL, INDIVIDUAL_AWARDS, statUpgradeCost, statUpgradeGain, getPosition } from '../data/extras.js';
+import { calcFame, userPostsTweet, getAvailablePartners, approachPartner, sendDatingMessage, setExclusive, breakUp, tryUpgradeStat } from '../engine/social.js';
+import { setApiKey, getApiKey, hasApiKey, clearApiKey, setModel, getModel } from '../engine/ai.js';
 
 let currentView = 'hub';
 let trainAlloc = {};
@@ -23,13 +26,9 @@ export function renderStart() {
       <label>이름
         <input type="text" id="in-name" placeholder="홍길동" maxlength="20">
       </label>
-      <label>국적
+      <label>국적 (${NATIONALITY_LIST.length}개국)
         <select id="in-nation">
-          ${Object.keys(NAME_POOLS).filter(k => k !== 'GEN').map(k => {
-            const flag = { KOR: '🇰🇷', JPN: '🇯🇵', ENG: '🏴󠁧󠁢󠁥󠁮󠁧󠁿', ESP: '🇪🇸', GER: '🇩🇪', ITA: '🇮🇹', FRA: '🇫🇷', BRA: '🇧🇷', ARG: '🇦🇷', POR: '🇵🇹', NED: '🇳🇱', USA: '🇺🇸', MEX: '🇲🇽', NGA: '🇳🇬', EGY: '🇪🇬', MAR: '🇲🇦' }[k] || '';
-            const label = { KOR: '대한민국', JPN: '일본', ENG: '잉글랜드', ESP: '스페인', GER: '독일', ITA: '이탈리아', FRA: '프랑스', BRA: '브라질', ARG: '아르헨티나', POR: '포르투갈', NED: '네덜란드', USA: '미국', MEX: '멕시코', NGA: '나이지리아', EGY: '이집트', MAR: '모로코' }[k] || k;
-            return `<option value="${k}">${flag} ${label}</option>`;
-          }).join('')}
+          ${NATIONALITY_LIST.map(n => `<option value="${n.code}">${n.flag} ${n.name}</option>`).join('')}
         </select>
       </label>
       <label>주발
@@ -39,12 +38,9 @@ export function renderStart() {
           <option value="양발">양발</option>
         </select>
       </label>
-      <label>포지션
+      <label>포지션 (세부)
         <select id="in-pos">
-          <option value="GK">골키퍼 (GK)</option>
-          <option value="DF">수비수 (DF)</option>
-          <option value="MF" selected>미드필더 (MF)</option>
-          <option value="FW">공격수 (FW)</option>
+          ${POSITIONS.map(p => `<option value="${p.id}"${p.id === 'CAM' ? ' selected' : ''}>${p.name} (${p.short})</option>`).join('')}
         </select>
       </label>
       <label>재능
@@ -150,7 +146,12 @@ const VIEWS = {
   national: renderNational,
   transfers: renderTransfers,
   trophies: renderTrophies,
-  world: renderWorld
+  world: renderWorld,
+  sns: renderSNS,
+  dating: renderDating,
+  awards: renderAwards,
+  upgrade: renderUpgrade,
+  settings: renderSettings
 };
 
 /* ---------- 홈 (허브) ---------- */
@@ -253,7 +254,7 @@ function renderPlayer() {
       <div class="card">
         <h3>${p.name} <small class="text-muted">${p.position} · ${p.nationality} · ${p.foot}</small></h3>
         <div id="stat-list">
-          ${POSITION_STATS[p.position].map(k => {
+          ${POSITION_STATS[groupOf(p.position)].map(k => {
             const v = p.stats[k];
             const cls = v < 50 ? 'low' : (v < 75 ? 'mid' : 'high');
             return `<div class="stat-row">
@@ -606,7 +607,7 @@ function resetTrainAlloc() {
   trainAlloc = {};
   const s = game.state;
   if (!s) return;
-  POSITION_STATS[s.player.position].forEach(k => trainAlloc[k] = 0);
+  POSITION_STATS[groupOf(s.player.position)].forEach(k => trainAlloc[k] = 0);
 }
 
 export function getTrainAlloc() { return trainAlloc; }
@@ -618,7 +619,7 @@ function renderTrainOptionsHtml() {
   return `
     <p>남은 포인트: <strong>${5 - used}</strong> / 5</p>
     <div id="train-list">
-    ${POSITION_STATS[s.player.position].map(k => `
+    ${POSITION_STATS[groupOf(s.player.position)].map(k => `
       <div class="train-opt">
         <span>${STAT_NAMES[k]}</span>
         <div class="train-controls">
@@ -750,5 +751,382 @@ export function renderEnd() {
     game.clearSave();
     game.init();
     renderStart();
+  };
+}
+
+/* ============================================================
+ *  SNS (X / Twitter) 뷰
+ * ============================================================ */
+function renderSNS() {
+  const s = game.state;
+  const sns = s.social.sns;
+  const fame = calcFame(s.player);
+
+  main().innerHTML = `
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>📱 내 X 계정</h3>
+        <p>팔로워: <strong>${sns.followers.toLocaleString()}</strong> · 명성도: <strong>${fame}</strong>/100</p>
+        <textarea id="sns-input" placeholder="무슨 일이 있나요? (280자)" maxlength="280" style="width:100%; min-height:80px; padding:10px; background:var(--bg-2); color:var(--text); border:1px solid var(--border); border-radius:6px; resize:vertical; font-family:inherit;"></textarea>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="primary" id="btn-tweet">📤 게시하기</button>
+          <span class="hint">다음 주 진행 시 AI/팬 댓글이 달립니다.</span>
+        </div>
+        ${!hasApiKey() ? '<p class="hint" style="margin-top:10px;">⚙️ 설정에서 Anthropic API 키 입력 시 더 자연스러운 댓글이 생성됩니다.</p>' : ''}
+
+        <h4 style="margin-top:18px;">내 게시물 (${sns.posts.length})</h4>
+        ${sns.posts.length === 0 ? '<p class="hint">아직 게시물이 없습니다.</p>' : sns.posts.map(p => `
+          <div class="sns-post">
+            <div class="sns-post-text">${escapeHtml(p.text)}</div>
+            <div class="sns-meta">W${p.week} · ${p.year}년 · ❤️ ${p.likes.toLocaleString()} · 💬 ${p.comments.length}</div>
+            ${p.pendingComments ? '<div class="hint">⌛ 댓글 생성 대기 중 (다음 턴에 달림)</div>' : ''}
+            ${p.comments.length > 0 ? `<div class="sns-comments">
+              ${p.comments.slice(0, 8).map(c => `<div class="sns-comment"><strong>${escapeHtml(c.handle || '@fan')}</strong>: ${escapeHtml(c.text)} <span class="text-muted">· ❤️ ${c.likes || 0}</span></div>`).join('')}
+            </div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="card">
+        <h3>🐦 X 타임라인 (기자들)</h3>
+        ${sns.timeline.length === 0 ? '<p class="hint">아직 기자 트윗이 없습니다. 명성이 25 이상이 되면 기자들이 트윗을 시작합니다 (현재 ${fame}).</p>' : sns.timeline.slice(0, 30).map(t => `
+          <div class="sns-post">
+            <div class="sns-handle"><strong>${escapeHtml(t.name || 'Reporter')}</strong> <span class="text-muted">${escapeHtml(t.handle)}</span></div>
+            <div class="sns-post-text">${escapeHtml(t.text)}</div>
+            <div class="sns-meta">W${t.week} · ${t.year}년</div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+
+  $('btn-tweet').onclick = async () => {
+    const text = $('sns-input').value.trim();
+    if (!text) return alert('내용을 입력하세요');
+    await userPostsTweet(s, text);
+    $('sns-input').value = '';
+    game.log_(`📤 X 게시물 작성: "${text.slice(0, 30)}${text.length > 30 ? '...' : ''}"`, 'event');
+    renderSNS();
+  };
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+/* ============================================================
+ *  연애 뷰
+ * ============================================================ */
+function renderDating() {
+  const s = game.state;
+  const fame = calcFame(s.player);
+  const available = getAvailablePartners(s);
+  const rels = s.social.dating.relationships;
+  const dating = s.social.dating.currentlyDating;
+
+  main().innerHTML = `
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>💕 만나본 사람들 (${Object.keys(rels).length})</h3>
+        ${Object.keys(rels).length === 0 ? '<p class="hint">아직 만난 사람이 없습니다. 오른쪽에서 누군가에게 먼저 연락해 보세요.</p>' : Object.entries(rels).map(([pid, r]) => `
+          <div class="offer-card">
+            <strong>${escapeHtml(r.partner.name)}</strong> <span class="text-muted">${escapeHtml(r.partner.occupation)} · ${r.partner.age}세</span>
+            ${dating === pid ? ' <span class="badge cont">💍 사귀는 중</span>' : ''}
+            <p style="font-size:0.82rem; color:var(--muted);">${escapeHtml(r.partner.personality)}</p>
+            <p>친밀도: <strong>${r.intimacy}/100</strong></p>
+            <div class="actions">
+              <button data-open="${pid}" class="primary">💬 대화 (${r.history.length})</button>
+              ${dating !== pid && r.intimacy >= 40 ? `<button data-exclusive="${pid}">💍 사귀자</button>` : ''}
+              <button data-break="${pid}" class="danger">이별</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="card">
+        <h3>🌟 만날 수 있는 사람들</h3>
+        <p class="hint">명성 ${fame} — 명성이 올라갈수록 만날 수 있는 사람이 늘어납니다.</p>
+        <div style="max-height:520px; overflow-y:auto;">
+          ${available.filter(p => !rels[p.id]).map(p => `
+            <div class="offer-card">
+              <strong>${escapeHtml(p.name)}</strong> <span class="text-muted">${escapeHtml(p.occupation)} · ${p.age}세</span>
+              <p style="font-size:0.82rem; color:var(--muted);">${escapeHtml(p.personality)}</p>
+              <p class="hint">유형: ${partnerTypeLabel(p.type)}</p>
+              <div class="actions">
+                <button class="primary" data-approach="${p.id}">📩 먼저 DM 보내기</button>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>
+    <div id="chat-modal-placeholder"></div>
+  `;
+
+  document.querySelectorAll('[data-approach]').forEach(b => {
+    b.onclick = async () => {
+      b.disabled = true;
+      b.textContent = '⌛ 보내는 중...';
+      await approachPartner(s, b.dataset.approach);
+      renderDating();
+    };
+  });
+  document.querySelectorAll('[data-open]').forEach(b => {
+    b.onclick = () => showDatingChat(b.dataset.open);
+  });
+  document.querySelectorAll('[data-exclusive]').forEach(b => {
+    b.onclick = () => {
+      if (setExclusive(s, b.dataset.exclusive)) {
+        game.log_(`💍 정식으로 사귀기 시작! (${rels[b.dataset.exclusive].partner.name})`, 'event');
+        renderDating();
+      } else {
+        alert('친밀도가 부족합니다 (40 이상 필요)');
+      }
+    };
+  });
+  document.querySelectorAll('[data-break]').forEach(b => {
+    b.onclick = () => {
+      if (confirm('정말 이별하시겠습니까?')) {
+        breakUp(s, b.dataset.break);
+        renderDating();
+      }
+    };
+  });
+}
+
+function partnerTypeLabel(t) {
+  return { civilian: '👤 일반인', model: '💃 모델', influencer: '📱 인플루언서', athlete: '🏃 운동선수', celebrity: '🎬 셀럽', musician: '🎵 음악가', heiress: '👑 재벌' }[t] || t;
+}
+
+function showDatingChat(partnerId) {
+  const s = game.state;
+  const rel = s.social.dating.relationships[partnerId];
+  if (!rel) return;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:560px;">
+      <h3>💬 ${escapeHtml(rel.partner.name)} <small class="text-muted">친밀도 ${rel.intimacy}</small></h3>
+      <div id="chat-history" style="max-height:380px; overflow-y:auto; margin-bottom:10px; padding:8px; background:var(--bg-2); border-radius:6px;">
+        ${rel.history.map(h => `
+          <div class="chat-bubble ${h.from === 'me' ? 'me' : 'them'}">
+            ${escapeHtml(h.text)}
+          </div>
+        `).join('')}
+      </div>
+      <div style="display:flex; gap:6px;">
+        <input id="chat-input" type="text" placeholder="메시지 입력..." style="flex:1;">
+        <button class="primary" id="chat-send">전송</button>
+      </div>
+      <div class="actions">
+        <button id="chat-close">닫기</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const scrollChat = () => {
+    const ch = $('chat-history');
+    if (ch) ch.scrollTop = ch.scrollHeight;
+  };
+  scrollChat();
+
+  $('chat-close').onclick = () => document.body.removeChild(overlay);
+  $('chat-send').onclick = async () => {
+    const text = $('chat-input').value.trim();
+    if (!text) return;
+    $('chat-input').value = '';
+    $('chat-send').disabled = true;
+    $('chat-send').textContent = '⌛';
+
+    // 즉시 내 메시지 표시
+    $('chat-history').innerHTML += `<div class="chat-bubble me">${escapeHtml(text)}</div>`;
+    scrollChat();
+
+    await sendDatingMessage(s, partnerId, text);
+
+    // 다시 그려서 답장 표시
+    const updated = s.social.dating.relationships[partnerId];
+    const last = updated.history[updated.history.length - 1];
+    $('chat-history').innerHTML += `<div class="chat-bubble them">${escapeHtml(last.text)}</div>`;
+    scrollChat();
+
+    $('chat-send').disabled = false;
+    $('chat-send').textContent = '전송';
+    // 친밀도 표시 업데이트는 모달 닫을 때 자동 반영
+  };
+  $('chat-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); $('chat-send').click(); }
+  });
+}
+
+/* ============================================================
+ *  개인상 뷰 (받은 상 + 받을 수 있는 상 목록)
+ * ============================================================ */
+function renderAwards() {
+  const s = game.state;
+  const won = (s.player.trophies || []).filter(t => t.type === 'individual');
+
+  // 카테고리별 그룹
+  const byCategory = {};
+  INDIVIDUAL_AWARDS.forEach(a => {
+    byCategory[a.category] = byCategory[a.category] || [];
+    byCategory[a.category].push(a);
+  });
+  const categoryLabels = {
+    best: '🌟 최우수 선수상',
+    top_scorer: '⚽ 득점왕',
+    top_assist: '🅰 어시스트왕 / 플레이메이커',
+    goalkeeper: '🧤 골키퍼상',
+    young: '🌱 영플레이어상',
+    playmaker: '🎯 플레이메이커상',
+    goal: '🎯 푸스카스 / 올해의 골'
+  };
+
+  main().innerHTML = `
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>🏆 받은 개인상 (${won.length}개)</h3>
+        ${won.length === 0 ? '<p class="hint">아직 개인상 수상 없음. 시즌 활약으로 도전하세요!</p>' : won.map(t => `
+          <div class="trophy-card ${t.prestige >= 90 ? '' : (t.prestige >= 60 ? 'silver' : 'bronze')}">
+            <span class="icon">🏅</span>
+            <div>
+              <strong>${escapeHtml(t.name)}</strong>
+              <div class="text-muted" style="font-size:0.8rem;">${t.season} · 명성 ${t.prestige}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+
+      <div class="card">
+        <h3>📜 도전 가능한 개인상 (${INDIVIDUAL_AWARDS.length}종)</h3>
+        <p class="hint">시즌 종료 시 활약에 따라 자동 수여됩니다.</p>
+        <div style="max-height:560px; overflow-y:auto;">
+          ${Object.entries(byCategory).map(([cat, items]) => `
+            <h4>${categoryLabels[cat] || cat} (${items.length})</h4>
+            ${items.map(a => `
+              <div style="padding:6px 8px; background:var(--bg-2); border-radius:4px; margin-bottom:4px; font-size:0.85rem;">
+                <strong>${escapeHtml(a.name)}</strong>
+                <div class="text-muted" style="font-size:0.75rem;">
+                  ${a.scope === 'global' ? '🌍 글로벌' : a.scope === 'continental' ? '🌐 ' + (a.conf || '') : a.scope === 'league' ? '📍 ' + (getLeague(a.leagueId)?.name || a.leagueId) : a.scope === 'tournament' ? '🏆 ' + (a.tournament || '') : ''} · 명성 ${a.prestige}
+                </div>
+              </div>
+            `).join('')}
+          `).join('')}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/* ============================================================
+ *  업그레이드 뷰 (돈으로 능력치 구매)
+ * ============================================================ */
+function renderUpgrade() {
+  const s = game.state;
+  const p = s.player;
+  const grp = groupOf(p.position);
+  const stats = POSITION_STATS[grp];
+
+  main().innerHTML = `
+    <div class="card">
+      <h3>💰 능력치 업그레이드 (돈으로 사기)</h3>
+      <p>현재 자산: <strong>${p.money.toLocaleString()}만 €</strong> · 나이: <strong>${p.age}세</strong></p>
+      <p class="hint">나이가 많을수록 1포인트 가격은 비싸지고, 한번에 오르는 폭은 줄어듭니다.<br>
+      현재 1구매 시 +${statUpgradeGain(p.age)} 포인트.</p>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:12px;">
+        ${stats.map(k => {
+          const cur = p.stats[k];
+          const cost = statUpgradeCost(cur, p.age);
+          return `
+            <div style="background:var(--bg-2); padding:10px; border-radius:8px;">
+              <strong>${STAT_NAMES[k]}</strong> <span class="text-warn">${cur}</span>
+              <p class="hint" style="margin-top:4px;">비용: ${cost.toLocaleString()}만 €</p>
+              <button class="primary" data-upgrade="${k}" ${p.money < cost ? 'disabled' : ''} style="width:100%; margin-top:6px;">
+                +${statUpgradeGain(p.age)} 구매
+              </button>
+            </div>
+          `;
+        }).join('')}
+      </div>
+      <p class="hint" style="margin-top:14px;">⚠ 노화는 자동으로 진행되므로 35세 이후엔 사실상 유지 비용입니다.</p>
+    </div>
+  `;
+
+  document.querySelectorAll('[data-upgrade]').forEach(b => {
+    b.onclick = () => {
+      const stat = b.dataset.upgrade;
+      const r = tryUpgradeStat(s, stat);
+      if (r.ok) {
+        game.log_(`💰 ${STAT_NAMES[stat]} +${r.gain} (${r.cost}만 € 지불, 현재 ${r.newValue})`, 'good');
+        refreshStatus();
+        renderUpgrade();
+      } else {
+        alert(r.reason === 'insufficient_funds' ? '돈이 부족합니다' : '최대치 도달');
+      }
+    };
+  });
+}
+
+/* ============================================================
+ *  설정 뷰 (Anthropic API 키)
+ * ============================================================ */
+function renderSettings() {
+  main().innerHTML = `
+    <div class="card">
+      <h3>⚙️ 설정 — AI 연동</h3>
+      <p>SNS 댓글, 기자 트윗, 연애 대화에 AI를 사용하려면 Anthropic API 키를 입력하세요.</p>
+      <p class="hint">키는 브라우저 localStorage에만 저장되며 서버로 전송되지 않습니다.<br>
+      <a href="https://console.anthropic.com/" target="_blank" style="color:var(--accent-3);">Anthropic Console</a>에서 발급 가능합니다.</p>
+      <label style="display:flex; flex-direction:column; gap:6px; margin-top:14px;">
+        <strong>API Key</strong>
+        <input type="password" id="api-key-input" placeholder="sk-ant-..." value="${getApiKey()}" style="width:100%;">
+      </label>
+      <label style="display:flex; flex-direction:column; gap:6px; margin-top:10px;">
+        <strong>모델</strong>
+        <select id="api-model-select">
+          <option value="claude-haiku-4-5" ${getModel() === 'claude-haiku-4-5' ? 'selected' : ''}>Claude Haiku 4.5 (빠르고 저렴)</option>
+          <option value="claude-sonnet-4-6" ${getModel() === 'claude-sonnet-4-6' ? 'selected' : ''}>Claude Sonnet 4.6 (균형)</option>
+          <option value="claude-opus-4-7" ${getModel() === 'claude-opus-4-7' ? 'selected' : ''}>Claude Opus 4.7 (최고 품질)</option>
+        </select>
+      </label>
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button class="primary" id="btn-save-key">💾 저장</button>
+        <button class="danger" id="btn-clear-key">키 삭제</button>
+      </div>
+      <p style="margin-top:14px;" class="${hasApiKey() ? 'text-good' : 'text-muted'}">
+        ${hasApiKey() ? '✅ API 키 저장됨 — AI 콘텐츠 활성화' : '🔄 키 없음 — 템플릿 폴백 모드'}
+      </p>
+      <hr style="border-color:var(--border); margin:20px 0;">
+      <h4>저장 데이터</h4>
+      <button id="btn-save-game">💾 게임 저장</button>
+      <button id="btn-load-game">📂 게임 불러오기</button>
+      <button class="danger" id="btn-clear-save">🗑 저장 데이터 삭제</button>
+    </div>
+  `;
+
+  $('btn-save-key').onclick = () => {
+    const k = $('api-key-input').value.trim();
+    if (k) {
+      setApiKey(k);
+      setModel($('api-model-select').value);
+      alert('저장됨');
+      renderSettings();
+    }
+  };
+  $('btn-clear-key').onclick = () => {
+    if (confirm('API 키를 삭제하시겠습니까?')) {
+      clearApiKey();
+      renderSettings();
+    }
+  };
+  $('btn-save-game').onclick = () => alert(game.save() ? '게임 저장됨' : '저장 실패');
+  $('btn-load-game').onclick = () => {
+    if (game.load()) { alert('불러옴'); showGame(); }
+    else alert('저장본 없음');
+  };
+  $('btn-clear-save').onclick = () => {
+    if (confirm('저장 데이터를 삭제하시겠습니까?')) game.clearSave();
   };
 }
