@@ -1,0 +1,303 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0d1b2a;
+  --bg-2: #1b263b;
+  --card: #2c3e50;
+  --accent: #00d97e;
+  --accent-2: #f4c430;
+  --danger: #e63946;
+  --text: #ecf0f1;
+  --muted: #95a5a6;
+  --border: #34495e;
+}
+
+body {
+  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Apple SD Gothic Neo', sans-serif;
+  background: linear-gradient(135deg, var(--bg) 0%, var(--bg-2) 100%);
+  color: var(--text);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+#app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+header {
+  border-bottom: 2px solid var(--accent);
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+}
+
+header h1 {
+  font-size: 1.6rem;
+  color: var(--accent);
+}
+
+#status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 10px;
+  font-size: 0.9rem;
+  background: var(--card);
+  padding: 10px 14px;
+  border-radius: 8px;
+}
+
+#status-bar span {
+  white-space: nowrap;
+}
+
+#status-bar strong {
+  color: var(--accent-2);
+}
+
+.hidden { display: none !important; }
+
+.screen {
+  animation: fadeIn 0.3s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+h2 {
+  margin-bottom: 16px;
+  color: var(--accent-2);
+}
+
+h3 {
+  font-size: 1.05rem;
+  margin-bottom: 12px;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 460px;
+  background: var(--card);
+  padding: 24px;
+  border-radius: 10px;
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+input, select, button {
+  font-family: inherit;
+  font-size: 0.95rem;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text);
+}
+
+input:focus, select:focus { outline: 2px solid var(--accent); }
+
+button {
+  cursor: pointer;
+  background: var(--bg-2);
+  transition: all 0.15s;
+}
+
+button:hover { background: var(--border); }
+
+button.primary {
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: bold;
+  border: none;
+}
+button.primary:hover { filter: brightness(1.1); }
+
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+#talent-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-2);
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+#talent-stars {
+  color: var(--accent-2);
+  font-size: 1.1rem;
+  letter-spacing: 2px;
+}
+
+.hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+  margin-top: 12px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.card {
+  background: var(--card);
+  border-radius: 10px;
+  padding: 16px;
+  border: 1px solid var(--border);
+}
+
+.card.wide { grid-column: 1 / -1; }
+
+@media (max-width: 720px) {
+  .grid { grid-template-columns: 1fr; }
+}
+
+/* 능력치 바 */
+.stat-row {
+  display: grid;
+  grid-template-columns: 70px 1fr 40px;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+}
+
+.stat-bar {
+  background: var(--bg-2);
+  border-radius: 4px;
+  height: 10px;
+  overflow: hidden;
+  position: relative;
+}
+
+.stat-bar-fill {
+  height: 100%;
+  transition: width 0.4s ease;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent-2) 100%);
+}
+
+.stat-bar-fill.low { background: var(--danger); }
+.stat-bar-fill.mid { background: var(--accent-2); }
+.stat-bar-fill.high { background: var(--accent); }
+
+.stat-row .stat-val {
+  text-align: right;
+  font-weight: bold;
+}
+
+.stat-row .stat-val.up { color: var(--accent); }
+.stat-row .stat-val.down { color: var(--danger); }
+
+.ovr-display {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+}
+
+.ovr-display strong {
+  font-size: 2rem;
+  color: var(--accent);
+}
+
+.ovr-display .potential {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* 훈련 옵션 */
+.train-opt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--bg-2);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 0.9rem;
+}
+
+.train-opt .train-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.train-opt button {
+  padding: 2px 10px;
+  font-size: 0.9rem;
+}
+
+.train-opt .alloc {
+  min-width: 24px;
+  text-align: center;
+  font-weight: bold;
+  color: var(--accent-2);
+}
+
+.train-opt .efficient { color: var(--accent); font-size: 0.75rem; margin-left: 6px; }
+
+/* 시즌 정보 */
+#season-info p {
+  margin-bottom: 6px;
+  font-size: 0.95rem;
+}
+
+#season-info strong {
+  color: var(--accent-2);
+}
+
+/* 로그 */
+#log {
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--bg-2);
+  border-radius: 6px;
+  padding: 12px;
+  font-size: 0.88rem;
+  font-family: 'Menlo', 'Consolas', monospace;
+}
+
+#log .log-entry {
+  padding: 4px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+
+#log .log-entry.good { color: var(--accent); }
+#log .log-entry.bad { color: var(--danger); }
+#log .log-entry.event { color: var(--accent-2); }
+
+#career-summary {
+  background: var(--card);
+  padding: 24px;
+  border-radius: 10px;
+  margin-bottom: 16px;
+  white-space: pre-line;
+  line-height: 1.8;
+}
+
+footer {
+  margin-top: 30px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}

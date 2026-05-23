@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>축구 선수 육성 시뮬레이터</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>⚽ 축구 선수 육성 시뮬레이터</h1>
+    <div id="status-bar" class="hidden">
+      <span id="status-name"></span>
+      <span id="status-age"></span>
+      <span id="status-club"></span>
+      <span id="status-ovr"></span>
+      <span id="status-money"></span>
+      <span id="status-season"></span>
+    </div>
+  </header>
+
+  <main>
+    <!-- 시작 화면 -->
+    <section id="screen-start" class="screen">
+      <h2>새로운 선수 생성</h2>
+      <div class="form">
+        <label>이름
+          <input type="text" id="input-name" placeholder="홍길동" maxlength="20">
+        </label>
+        <label>국적
+          <select id="input-nation"></select>
+        </label>
+        <label>주발
+          <select id="input-foot">
+            <option value="오른발">오른발</option>
+            <option value="왼발">왼발</option>
+            <option value="양발">양발</option>
+          </select>
+        </label>
+        <label>포지션
+          <select id="input-position">
+            <option value="GK">골키퍼 (GK)</option>
+            <option value="DF">수비수 (DF)</option>
+            <option value="MF" selected>미드필더 (MF)</option>
+            <option value="FW">공격수 (FW)</option>
+          </select>
+        </label>
+        <label>재능 (랜덤)
+          <div id="talent-box">
+            <span id="talent-stars">★★★☆☆</span>
+            <button type="button" id="btn-reroll">다시 굴리기 (3회 남음)</button>
+          </div>
+        </label>
+        <button id="btn-start" class="primary">커리어 시작 (만 16세)</button>
+      </div>
+      <p class="hint">현실 데이터 기반: 선수는 16세에 데뷔하여 27~29세에 전성기를 맞고 32세 이후 기량이 하락합니다. 재능과 훈련 선택이 성장 곡선을 결정합니다.</p>
+    </section>
+
+    <!-- 메인 시즌 화면 -->
+    <section id="screen-season" class="screen hidden">
+      <div class="grid">
+        <div class="card">
+          <h3>능력치</h3>
+          <div id="stat-list"></div>
+          <div class="ovr-display">
+            <span>종합 평점</span>
+            <strong id="stat-ovr">--</strong>
+            <span class="potential">잠재력 <span id="stat-pot">--</span></span>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>이번 주 훈련 (포인트 <span id="train-points">5</span> / 5)</h3>
+          <p class="hint">주발/포지션에 맞는 훈련은 효율이 높습니다. 과훈련 시 부상 위험.</p>
+          <div id="train-options"></div>
+          <button id="btn-train-confirm" class="primary">훈련 완료</button>
+        </div>
+
+        <div class="card">
+          <h3>시즌 정보</h3>
+          <div id="season-info"></div>
+          <button id="btn-play-match" class="primary">다음 경기 진행</button>
+          <button id="btn-skip-season">시즌 마무리</button>
+        </div>
+
+        <div class="card wide">
+          <h3>경기 기록 / 이벤트 로그</h3>
+          <div id="log"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 은퇴 화면 -->
+    <section id="screen-end" class="screen hidden">
+      <h2>커리어 종료</h2>
+      <div id="career-summary"></div>
+      <button id="btn-restart" class="primary">새 커리어 시작</button>
+    </section>
+  </main>
+
+  <footer>
+    <small>© 축구 선수 육성 시뮬레이터 — 데이터: 실제 FIFA/Transfermarkt 평균값 기반 (학습용)</small>
+  </footer>
+</div>
+<script src="game.js"></script>
+</body>
+</html>
