@@ -158,21 +158,37 @@ export function generateSeasonFixtures(player, clubsInLeague, opponentsContinent
    */
   const weeks = [];
   const leagueOpponents = clubsInLeague.filter(c => c.id !== player.clubId);
-  const numLeagueRounds = leagueOpponents.length; // 홈/어웨이 1회씩 = 2*N. 38경기는 19팀 가정
-  // 38주차 분량의 리그 경기를 만들기 위해 홈/어웨이 두 번 라운드 (총 2*(size-1))
+  const leagueName = getLeague(player.leagueId).name;
+  // 더블 라운드 로빈: 각 상대 vs 홈 1 + 원정 1 = 총 2*(N-1) 경기
+  // 라운드 1: H/A 무작위 배분 (절반 홈 / 절반 원정)
+  // 라운드 2: 라운드 1의 H/A 반전 → 각 상대와 정확히 홈/원정 1번씩
   const allLeagueFixtures = [];
-  for (let r = 0; r < 2; r++) {
-    const shuffled = [...leagueOpponents].sort(() => Math.random() - 0.5);
-    shuffled.forEach(opp => {
-      allLeagueFixtures.push({
-        type: 'league',
-        opp: opp.id, oppName: opp.name, oppStr: opp.strength,
-        home: r === 0, // 1라운드 홈, 2라운드 원정
-        competition: getLeague(player.leagueId).name,
-        oppLeagueId: opp.leagueId
-      });
+  const homeInRound1 = {}; // opp.id → bool
+
+  const round1Order = [...leagueOpponents].sort(() => Math.random() - 0.5);
+  round1Order.forEach((opp, i) => {
+    // 라운드 1: 짝수 인덱스는 홈, 홀수는 원정 (50/50 균등)
+    const home = i % 2 === 0;
+    homeInRound1[opp.id] = home;
+    allLeagueFixtures.push({
+      type: 'league',
+      opp: opp.id, oppName: opp.name, oppStr: opp.strength,
+      home,
+      competition: leagueName,
+      oppLeagueId: opp.leagueId
     });
-  }
+  });
+
+  const round2Order = [...leagueOpponents].sort(() => Math.random() - 0.5);
+  round2Order.forEach(opp => {
+    allLeagueFixtures.push({
+      type: 'league',
+      opp: opp.id, oppName: opp.name, oppStr: opp.strength,
+      home: !homeInRound1[opp.id], // 라운드 1의 반대
+      competition: leagueName,
+      oppLeagueId: opp.leagueId
+    });
+  });
 
   // 자국 컵 — 첫 라운드만 (이후는 동적 추가)
   const myLeague = getLeague(player.leagueId);
@@ -247,9 +263,9 @@ export function generateSeasonFixtures(player, clubsInLeague, opponentsContinent
         });
       });
     } else if (hasCont.length > 0) {
-      // 대륙간 + 리그
+      // 대륙간 (화/수) + 리그 (토) — 다른 요일이라 항상 같이 가능
       hasCont.forEach(c => wk.matches.push({ ...c, week: w }));
-      if (leagueIdx < allLeagueFixtures.length && chance(0.7)) {
+      if (leagueIdx < allLeagueFixtures.length) {
         wk.matches.push({ ...allLeagueFixtures[leagueIdx++], week: w });
       }
     } else if (leagueIdx < allLeagueFixtures.length) {
@@ -262,6 +278,19 @@ export function generateSeasonFixtures(player, clubsInLeague, opponentsContinent
     });
 
     weeks.push(wk);
+  }
+
+  // 안전망: 남은 리그 경기를 빈 주(매치 없거나 1개)에 채워넣기
+  while (leagueIdx < allLeagueFixtures.length) {
+    // 가장 적게 잡힌 주 찾기 (국제 휴식 제외)
+    const target = weeks
+      .filter(w => !(w.events && w.events.some(e => e.type === 'international_break')))
+      .sort((a, b) => a.matches.length - b.matches.length)[0];
+    if (!target) break;
+    const fx = allLeagueFixtures[leagueIdx++];
+    fx.week = target.week;
+    fx.date = computeMatchDate(seasonStart, target.week, 'league');
+    target.matches.push(fx);
   }
 
   return weeks;
