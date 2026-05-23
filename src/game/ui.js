@@ -10,9 +10,11 @@ import { calcFame, userPostsTweet, getAvailablePartners, approachPartner, sendDa
 import { setApiKey, getApiKey, hasApiKey, clearApiKey, setModel, getModel } from '../engine/ai.js';
 import { dateLabel, shortDate, daysBetween, sameDate, compareDate } from '../engine/calendar.js';
 import { getDecisionTemplate } from '../engine/decisions.js';
+import { generateLeagueClubs } from '../engine/generator.js';
 
 let currentView = 'hub';
 let trainAlloc = {};
+let charCreate = { clubsByLeague: {} }; // 캐릭터 생성 중 캐시된 클럽들
 
 const $ = (id) => document.getElementById(id);
 const main = () => $('main');
@@ -86,6 +88,17 @@ export function renderStart() {
         </select>
       </label>
 
+      <h4 style="margin-top:8px;">시작 팀 선택</h4>
+      <label>리그
+        <select id="in-league">
+          ${renderLeagueOptions()}
+        </select>
+      </label>
+      <label>시작 클럽
+        <select id="in-club"></select>
+        <small class="hint" id="club-hint" style="margin-top:4px; display:block;"></small>
+      </label>
+
       <div style="display:flex; gap:8px; margin-top:14px;">
         <button id="btn-create" class="primary" style="flex:1;">커리어 시작 (만 16세)</button>
         <button id="btn-load">💾 저장 불러오기</button>
@@ -94,6 +107,31 @@ export function renderStart() {
     <p class="hint">현실 데이터 기반 · 200+ 리그 · 세계 클럽 · 6대륙 트로피</p>
   `;
 
+  // 캐시 초기화
+  charCreate.clubsByLeague = {};
+
+  // 리그 선택 시 클럽 목록 갱신
+  const refreshClubOptions = () => {
+    const leagueId = $('in-league').value;
+    const clubs = ensureLeagueClubs(leagueId);
+    const opts = clubs.map((c, i) => `<option value="${c.id}">${escapeHtml(c.name)} (강도 ${c.strength})</option>`).join('');
+    $('in-club').innerHTML = opts;
+    updateClubHint();
+  };
+  const updateClubHint = () => {
+    const leagueId = $('in-league').value;
+    const clubId = $('in-club').value;
+    const clubs = charCreate.clubsByLeague[leagueId] || [];
+    const c = clubs.find(x => x.id === clubId);
+    if (c) {
+      const tierLabel = c.strength >= 88 ? '🌟 빅클럽' : (c.strength >= 75 ? '⭐ 강팀' : (c.strength >= 60 ? '⚽ 중상위' : (c.strength >= 50 ? '🔄 중하위' : '📉 약체')));
+      $('club-hint').textContent = `${tierLabel} · 명성 ${c.reputation}`;
+    }
+  };
+  $('in-league').onchange = refreshClubOptions;
+  $('in-club').onchange = updateClubHint;
+  refreshClubOptions(); // 초기 로딩
+
   $('btn-create').onclick = () => {
     const name = $('in-name').value.trim() || '이름없음';
     const height = parseInt($('in-height').value) || 178;
@@ -101,14 +139,19 @@ export function renderStart() {
     const weakFoot = parseInt($('in-weakfoot').value) || 3;
     const skillMoves = parseInt($('in-skill-moves').value) || 3;
     const talent = parseInt($('in-talent').value) || 3;
+    const startLeagueId = $('in-league').value;
+    const startClubId = $('in-club').value;
     game.newCareer({
       name,
       nationality: $('in-nation').value,
       foot: $('in-foot').value,
       position: $('in-pos').value,
       talent,
-      height, weight, weakFoot, skillMoves
+      height, weight, weakFoot, skillMoves,
+      startLeagueId, startClubId,
+      preGeneratedClubs: charCreate.clubsByLeague
     });
+    charCreate.clubsByLeague = {}; // 캐시 정리
     showGame();
   };
   $('btn-load').onclick = () => {
@@ -118,6 +161,30 @@ export function renderStart() {
       alert('저장된 게임이 없습니다.');
     }
   };
+}
+
+/* ---------- 리그 옵션 정렬 (연맹별, 강도 내림차순) ---------- */
+function renderLeagueOptions() {
+  const groups = {};
+  LEAGUES.forEach(l => { groups[l.conf] = groups[l.conf] || []; groups[l.conf].push(l); });
+  const order = ['UEFA', 'CONMEBOL', 'CONCACAF', 'AFC', 'CAF', 'OFC'];
+  return order.filter(c => groups[c]).map(conf => {
+    const region = CONFEDERATIONS[conf]?.region || conf;
+    const sorted = [...groups[conf]].sort((a, b) => b.strength - a.strength);
+    return `<optgroup label="${conf} — ${region}">
+      ${sorted.map(l => `<option value="${l.id}"${l.id === 'kor1' ? ' selected' : ''}>${l.name} · ${l.country} · ${l.tier}부 · 강도 ${l.strength}</option>`).join('')}
+    </optgroup>`;
+  }).join('');
+}
+
+/* ---------- 캐릭터 생성 중 클럽 캐시 ---------- */
+function ensureLeagueClubs(leagueId) {
+  if (!charCreate.clubsByLeague[leagueId]) {
+    const league = LEAGUES.find(l => l.id === leagueId);
+    if (!league) return [];
+    charCreate.clubsByLeague[leagueId] = generateLeagueClubs(league);
+  }
+  return charCreate.clubsByLeague[leagueId];
 }
 
 export function showGame() {

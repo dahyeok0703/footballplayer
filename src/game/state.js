@@ -37,25 +37,34 @@ export const game = {
 
   /* ---------- 새 커리어 시작 ---------- */
   newCareer(opts) {
-    const { name, nationality, foot, position, talent, height = 178, weight = 72, weakFoot = 3, skillMoves = 3 } = opts;
+    const { name, nationality, foot, position, talent, height = 178, weight = 72, weakFoot = 3, skillMoves = 3, startLeagueId: userLeagueId, startClubId: userClubId, preGeneratedClubs } = opts;
 
-    // 모든 리그 클럽 생성
+    // 모든 리그 클럽 생성 (사용자가 미리 본 클럽은 재사용)
     const world = { clubs: {}, leagueTables: {}, leagueChampions: {}, tournaments: {} };
     LEAGUES.forEach(l => {
-      world.clubs[l.id] = generateLeagueClubs(l);
+      if (preGeneratedClubs && preGeneratedClubs[l.id]) {
+        world.clubs[l.id] = preGeneratedClubs[l.id];
+      } else {
+        world.clubs[l.id] = generateLeagueClubs(l);
+      }
     });
 
-    // 시작 클럽: 재능 따라 결정
-    let startLeagueId;
-    if (talent === 5) startLeagueId = pick(['esp1', 'eng1', 'ger1', 'ita1', 'fra1', 'kor1']);
-    else if (talent === 4) startLeagueId = pick(['ned1', 'por1', 'bel1', 'kor1', 'jpn1', 'usa1', 'mex1', 'eng2']);
-    else if (talent === 3) startLeagueId = pick(['kor1', 'jpn1', 'rus1', 'tur1', 'sco1', 'kor2', 'jpn2', 'bel1']);
-    else if (talent === 2) startLeagueId = pick(['kor2', 'jpn2', 'eng3', 'ger2', 'ita2', 'fra2']);
-    else startLeagueId = pick(['kor2', 'eng3', 'cyp1', 'isr1', 'gre1', 'pol1']);
+    // 시작 리그: 사용자 선택 > 없으면 재능 기반 폴백
+    let startLeagueId = userLeagueId;
+    if (!startLeagueId) {
+      if (talent === 5) startLeagueId = pick(['esp1', 'eng1', 'ger1', 'ita1', 'fra1', 'kor1']);
+      else if (talent === 4) startLeagueId = pick(['ned1', 'por1', 'bel1', 'kor1', 'jpn1', 'usa1', 'mex1', 'eng2']);
+      else if (talent === 3) startLeagueId = pick(['kor1', 'jpn1', 'rus1', 'tur1', 'sco1', 'kor2', 'jpn2', 'bel1']);
+      else if (talent === 2) startLeagueId = pick(['kor2', 'jpn2', 'eng3', 'ger2', 'ita2', 'fra2']);
+      else startLeagueId = pick(['kor2', 'eng3', 'cyp1', 'isr1', 'gre1', 'pol1']);
+    }
 
-    // 해당 리그에서 중하위 클럽
+    // 시작 클럽: 사용자 선택 > 없으면 중하위 폴백
     const clubs = world.clubs[startLeagueId];
-    const startClub = clubs[rand(Math.floor(clubs.length * 0.5), clubs.length - 1)];
+    let startClub = userClubId ? clubs.find(c => c.id === userClubId) : null;
+    if (!startClub) {
+      startClub = clubs[rand(Math.floor(clubs.length * 0.5), clubs.length - 1)];
+    }
     generateClubRoster(startClub);
 
     // 초기 능력치
