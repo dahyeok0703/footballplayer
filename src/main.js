@@ -3,10 +3,12 @@
  * ================================================================ */
 
 import { game, generateOneOffer } from './game/state.js';
-import { renderStart, renderView, refreshStatus, showGame, showMatchModal, showSeasonEndModal, renderEnd, getTrainAlloc, showDecisionModal, showTournamentCallupModal } from './game/ui.js';
+import { renderStart, renderView, refreshStatus, showGame, showMatchModal, showSeasonEndModal, renderEnd, getTrainAlloc, showDecisionModal, showTournamentCallupModal, showPreMatchChoice } from './game/ui.js';
 import { simulateMatch, recordMatch, applyTraining, calcOVR } from './engine/sim.js';
 import { applyPerMatchGrowth } from './engine/social.js';
-import { dateLabel } from './engine/calendar.js';
+import { dateLabel, addDays } from './engine/calendar.js';
+import { getContinentalCup, getPrimaryCup, getDomesticCups } from './data/cups.js';
+import { uid, pick, rand, chance } from './engine/generator.js';
 
 let busy = false;
 
@@ -73,15 +75,33 @@ async function processEvents(events) {
   }
 }
 
-function processFixture(fixture) {
-  return new Promise(resolve => {
-    const s = game.state;
-    if (s.player.injury > 0) {
-      game.log_(`🚑 ${dateLabel(fixture.date)} vs ${fixture.oppName} 결장 (부상 ${s.player.injury}주)`, 'bad');
-      resolve();
-      return;
-    }
+async function processFixture(fixture) {
+  const s = game.state;
+  if (s.player.injury > 0) {
+    game.log_(`🚑 ${dateLabel(fixture.date)} vs ${fixture.oppName} 결장 (부상 ${s.player.injury}주)`, 'bad');
+    return;
+  }
 
+  // 중요 경기 사전 선택지 (30% 확률 + 컵/대륙간 결승은 무조건)
+  const isImportant = fixture.type === 'continental' || (fixture.type === 'cup' && ['8강','준결승','결승'].includes(fixture.round));
+  if (isImportant || Math.random() < 0.3) {
+    await new Promise(res => {
+      showPreMatchChoice(fixture, (choiceEffect) => {
+        if (choiceEffect) {
+          s.flags = s.flags || {};
+          if (choiceEffect.ratingBonus) s.flags.nextMatchBonus = (s.flags.nextMatchBonus || 0) + choiceEffect.ratingBonus;
+          if (choiceEffect.injuryRisk && chance(choiceEffect.injuryRisk)) {
+            s.player.injury = rand(1, 4);
+            game.log_(`🚑 경기 전 부상! ${s.player.injury}주 결장`, 'bad');
+          }
+        }
+        res();
+      });
+    });
+    if (s.player.injury > 0) return; // 부상으로 결장
+  }
+
+  return new Promise(resolve => {
     const result = simulateMatch(s.player, fixture);
     // 결정 효과 (다음 매치 보너스) 적용
     if (s.flags && s.flags.nextMatchBonus) {
@@ -99,8 +119,127 @@ function processFixture(fixture) {
     const cls = result.result === 'W' ? 'good' : (result.result === 'L' ? 'bad' : 'event');
     const compName = { league: '리그', cup: '컵', continental: '대륙간', national: '국대' }[fixture.type] || '';
     game.log_(`⚽ ${dateLabel(fixture.date)} ${compName} vs ${fixture.oppName} ${result.myGoals}-${result.oppGoals} (${result.result}) 평점 ${result.rating}`, cls);
+
+    // 컵/대륙간 진출 시 다음 라운드 동적 추가
+    if (result.result === 'W' || (result.result === 'D' && Math.random() < 0.4)) {
+      advanceCupRound(fixture);
+    } else if (fixture.type === 'cup' || (fixture.type === 'continental' && fixture.round !== '조별리그')) {
+      game.log_(`🚪 ${fixture.competition} ${fixture.round} 탈락`, 'bad');
+    }
+
     showMatchModal(fixture, result, resolve);
   });
+}
+
+/* ---------- 컵/대륙간 다음 라운드 동적 추가 ---------- */
+function advanceCupRound(fixture) {
+  const s = game.state;
+  if (fixture.type !== 'cup' && fixture.type !== 'continental') return;
+
+  let rounds, nextRoundName, weeksAhead = 5;
+  if (fixture.type === 'cup') {
+    const cups = getDomesticCups(s.player.country?.slice(0, 3).toUpperCase() || 'ENG');
+    const cup = cups.find(c => c.id === fixture.cupId) || cups[0];
+    rounds = cup.rounds || ['16강','8강','준결승','결승'];
+  } else {
+    const cup = getContinentalCup(fixture.cupId);
+    if (!cup) return;
+    if (fixture.round === '조별리그') {
+      // 그룹 끝나면 자동으로 16강 (현재 그룹 매치 6개 끝났는지 체크)
+      const groupMatches = s.season.played.filter(m => m.type === 'continental' && m.round === '조별리그');
+      if (groupMatches.length >= 6) {
+        // 16강 진출 (4승 이상이면)
+        const wins = groupMatches.filter(m => m.result === 'W').length;
+        if (wins >= 2) {
+          nextRoundName = cup.knockoutRounds[0];
+        } else {
+          game.log_(`🚪 ${cup.name} 조별리그 탈락`, 'bad');
+          return;
+        }
+      } else {
+        return; // 아직 그룹 진행 중
+      }
+    } else {
+      rounds = cup.knockoutRounds || ['16강','8강','준결승','결승'];
+    }
+  }
+
+  if (!nextRoundName) {
+    const idx = rounds.indexOf(fixture.round);
+    if (idx < 0 || idx >= rounds.length - 1) {
+      // 결승 통과 = 우승!
+      if (fixture.round === '결승') {
+        const prestige = fixture.type === 'continental' ? (getContinentalCup(fixture.cupId)?.prestige || 60) : 60;
+        s.player.trophies.push({
+          season: s.year,
+          name: `${fixture.competition} 우승`,
+          type: fixture.type === 'continental' ? 'continental_club' : 'cup',
+          prestige
+        });
+        game.log_(`🏆🏆🏆 ${fixture.competition} 우승!`, 'event');
+      }
+      return;
+    }
+    nextRoundName = rounds[idx + 1];
+  }
+
+  // 다음 라운드 매치 fixture 추가
+  const nextDate = addDays(fixture.date, weeksAhead * 7);
+  const opp = generateCupOpponent(fixture.type, fixture.cupId, nextRoundName, s);
+  const newFixture = {
+    type: fixture.type,
+    week: 0, // dummy
+    opp: opp.id,
+    oppName: opp.name,
+    oppStr: opp.strength,
+    home: chance(0.5),
+    competition: fixture.competition,
+    cupId: fixture.cupId,
+    round: nextRoundName,
+    oppLeagueId: opp.leagueId,
+    date: nextDate
+  };
+
+  // fixtures의 첫 번째 weekly 슬롯에 추가 (또는 새 주차 생성)
+  // 단순히 첫 번째 빈 matches에 추가
+  let added = false;
+  for (const wk of s.season.fixtures) {
+    if (wk.matches && wk.matches.length < 3) {
+      // 같은 주에 너무 많이 들어가지 않게 — 새 매치만 추가
+      const sameWeekDate = wk.matches[0]?.date;
+      if (sameWeekDate && sameWeekDate.month === nextDate.month && Math.abs(sameWeekDate.day - nextDate.day) < 4) {
+        wk.matches.push(newFixture);
+        added = true;
+        break;
+      }
+    }
+  }
+  if (!added) {
+    s.season.fixtures.push({ week: 99, matches: [newFixture], events: [] });
+  }
+  game.log_(`✅ ${fixture.competition} ${nextRoundName} 진출! 다음 상대: ${opp.name} (${dateLabel(nextDate)})`, 'good');
+}
+
+function generateCupOpponent(type, cupId, round, state) {
+  const lateRound = ['8강','준결승','결승'].includes(round);
+  let str;
+  if (type === 'continental') {
+    const cup = getContinentalCup(cupId);
+    const base = cup ? (cup.tier === 1 ? 80 : (cup.tier === 2 ? 70 : 60)) : 70;
+    str = base + (lateRound ? rand(0, 12) : rand(-5, 5));
+  } else {
+    const myLeague = state.player.leagueId;
+    const base = 60;
+    str = base + (lateRound ? rand(-5, 15) : rand(-20, 5));
+  }
+  const names = ['Real', 'Atletico', 'Sporting', 'FC', 'AC', 'Olympique', 'Inter'];
+  const places = ['Nordhaven','Solbeck','Vinland','Riverdale','Sunhill','Westvale','Glenwood','Ironbridge','Goldcrest','Eldermoor'];
+  return {
+    id: uid('opp'),
+    name: chance(0.5) ? `${pick(names)} ${pick(places)}` : `${pick(places)} ${pick(['United','City','FC'])}`,
+    strength: Math.max(40, Math.min(95, str)),
+    leagueId: null
+  };
 }
 
 function processDecision(ev) {

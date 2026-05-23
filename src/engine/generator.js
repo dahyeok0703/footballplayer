@@ -4,6 +4,7 @@
 
 import { LEAGUES, REAL_CLUBS, NAME_POOLS, POOL_BY_CODE, getLeague } from '../data/world.js';
 import { addDays, getDayOfWeek } from './calendar.js';
+import { getPrimaryCup, getDomesticCups, getContinentalCup, getContinentalForRank, CONTINENTAL_CUPS, A_MATCH_DATES, getInternationalMatchType } from '../data/cups.js';
 
 let _idCounter = 1;
 export function uid(prefix = 'id') { return `${prefix}_${_idCounter++}`; }
@@ -173,49 +174,42 @@ export function generateSeasonFixtures(player, clubsInLeague, opponentsContinent
     });
   }
 
-  // 컵 경기 (라운드별, 첫 라운드는 5라운드부터 시작)
-  const cupRounds = [
-    { round: '32강', week: 8 },
-    { round: '16강', week: 13 },
-    { round: '8강', week: 22 },
-    { round: '4강', week: 29 },
-    { round: '준결승', week: 36 },
-    { round: '결승', week: 43 }
-  ];
+  // 자국 컵 — 첫 라운드만 (이후는 동적 추가)
+  const myLeague = getLeague(player.leagueId);
+  const primaryCup = getPrimaryCup(myLeague.code);
+  const cupRoundOrder = primaryCup.rounds || ['16강', '8강', '준결승', '결승'];
+  const firstRoundWeek = 8;
+  const firstCupRound = cupRoundOrder[0];
+  const cupRounds = [{ round: firstCupRound, week: firstRoundWeek, cupId: primaryCup.id, cupName: primaryCup.name }];
+  // 리그컵 (있으면) 첫 라운드도
+  const cups = getDomesticCups(myLeague.code);
+  const leagueCup = cups.find(c => c.tier === 'league_cup');
+  if (leagueCup && leagueCup.rounds && leagueCup.rounds.length > 0) {
+    cupRounds.push({ round: leagueCup.rounds[0], week: 6, cupId: leagueCup.id, cupName: leagueCup.name });
+  }
 
-  // 대륙간 경기 (티어 1~2 클럽만)
+  // 대륙간 컵 — opponentsContinental 안에 cupId가 있어야 함, 없으면 출전 안함
   const continentalRounds = [];
-  if (opponentsContinental && opponentsContinental.length > 0) {
+  const continentalCupId = opponentsContinental && opponentsContinental.cupId;
+  if (continentalCupId && opponentsContinental.opponents && opponentsContinental.opponents.length > 0) {
+    const cup = getContinentalCup(continentalCupId);
+    const cupName = cup ? cup.name : '대륙간컵';
     // 그룹 스테이지 6경기 (주 4,7,9,12,15,17)
     const groupWeeks = [4, 7, 9, 12, 15, 17];
-    opponentsContinental.slice(0, 6).forEach((opp, i) => {
+    const groupOpps = opponentsContinental.opponents.slice(0, 6);
+    groupOpps.forEach((opp, i) => {
       continentalRounds.push({
         type: 'continental',
         week: groupWeeks[i] || (3 + i * 2),
         opp: opp.id, oppName: opp.name, oppStr: opp.strength,
         home: i % 2 === 0,
-        competition: opponentsContinental.competition || '대륙간컵 그룹',
+        competition: cupName,
+        cupId: continentalCupId,
         oppLeagueId: opp.leagueId,
         round: '조별리그'
       });
     });
-    // 토너먼트
-    if (opponentsContinental.length > 6) {
-      const knockoutWeeks = [25, 27, 33, 39, 44];
-      const rounds = ['16강', '16강 2차', '8강', '4강', '결승'];
-      opponentsContinental.slice(6).forEach((opp, i) => {
-        if (i >= 5) return;
-        continentalRounds.push({
-          type: 'continental',
-          week: knockoutWeeks[i],
-          opp: opp.id, oppName: opp.name, oppStr: opp.strength,
-          home: i % 2 === 0,
-          competition: '대륙간컵 토너먼트',
-          oppLeagueId: opp.leagueId,
-          round: rounds[i]
-        });
-      });
-    }
+    // 토너먼트(16강 등)는 그룹 종료 후 동적으로 추가됨 — 여기서는 미리 안 만듦
   }
 
   // 주차별 분배
@@ -229,26 +223,28 @@ export function generateSeasonFixtures(player, clubsInLeague, opponentsContinent
       continue;
     }
 
-    // 리그 경기 (38주: 1~5, 7~10, 12~13, 16, 18~21, 23~24, 26~28, 30, 31, 34~37, 40~42, 45~50)
-    // 단순화: 1~50중 대륙간/컵 충돌 안 하면 리그 경기 배치
-    const hasCup = cupRounds.find(c => c.week === w);
+    // 리그 경기 (대륙간/컵 충돌 안 하면 리그 경기 배치)
     const hasCont = continentalRounds.filter(c => c.week === w);
-
-    if (hasCup && leagueIdx < allLeagueFixtures.length) {
+    const cupsThisWeek = cupRounds.filter(c => c.week === w);
+    const hasCupThisWeek = cupsThisWeek.length > 0;
+    if (hasCupThisWeek && leagueIdx < allLeagueFixtures.length) {
       // 컵 + 같은 주 리그도 가능 (실제 주중컵 / 주말리그)
       wk.matches.push({
         ...allLeagueFixtures[leagueIdx++],
         week: w
       });
-      const cupOpp = pickCupOpponent(player.leagueId, hasCup.round);
-      wk.matches.push({
-        type: 'cup',
-        week: w,
-        opp: cupOpp.id, oppName: cupOpp.name, oppStr: cupOpp.strength,
-        home: chance(0.5),
-        competition: getLeague(player.leagueId).cupId,
-        round: hasCup.round,
-        oppLeagueId: cupOpp.leagueId
+      cupsThisWeek.forEach(cr => {
+        const cupOpp = pickCupOpponent(player.leagueId, cr.round);
+        wk.matches.push({
+          type: 'cup',
+          week: w,
+          opp: cupOpp.id, oppName: cupOpp.name, oppStr: cupOpp.strength,
+          home: chance(0.5),
+          competition: cr.cupName,
+          cupId: cr.cupId,
+          round: cr.round,
+          oppLeagueId: cupOpp.leagueId
+        });
       });
     } else if (hasCont.length > 0) {
       // 대륙간 + 리그
@@ -285,19 +281,31 @@ function pickCupOpponent(leagueId, round) {
   };
 }
 
-/* ---------- 대륙간 대회 상대 선정 ---------- */
-export function selectContinentalOpponents(club, allClubsByLeague, conf) {
-  // 같은 연맹의 다른 클럽 top 강팀에서 6 (그룹) + 5 (토너먼트) 추출
+/* ---------- 대륙간 대회 상대 선정 ----------
+ *  cupId가 주어지면 해당 컵 출전 클럽 풀에서 추출.
+ *  반환: { cupId, opponents: [...] }
+ *  cupId가 없으면 null (출전 자격 없음)
+ */
+export function selectContinentalOpponents(club, allClubsByLeague, conf, cupId) {
+  if (!cupId) return null;
+  const cup = getContinentalCup(cupId);
+  if (!cup) return null;
   const confLeagues = LEAGUES.filter(l => l.conf === conf && l.tier === 1);
   const candidates = [];
   confLeagues.forEach(l => {
     const clubs = allClubsByLeague[l.id];
-    if (clubs) candidates.push(...clubs.slice(0, 4));
+    if (!clubs) return;
+    // 컵 등급에 따라 다른 풀: tier1=상위 4팀, tier2=중상위 5~9, tier3=하위
+    let pool;
+    if (cup.tier === 1) pool = clubs.slice(0, 4);
+    else if (cup.tier === 2) pool = clubs.slice(3, 8);
+    else pool = clubs.slice(6, 12);
+    candidates.push(...pool);
   });
-  candidates.sort((a, b) => b.strength - a.strength);
+  // 셔플 + 클럽 자신 제외
   const filtered = candidates.filter(c => c.id !== club.id);
-  // 11개 추출
-  return filtered.slice(0, 11);
+  filtered.sort(() => Math.random() - 0.5);
+  return { cupId, opponents: filtered.slice(0, 6) };
 }
 
 /* ---------- 국가대표 일정 ---------- */

@@ -10,6 +10,7 @@ import { nextDay, addDays, compareDate, sameDate, dateLabel, daysBetween, isSeas
 import { scheduleSeasonDecisions, getDecisionTemplate, applyDecisionEffect } from '../engine/decisions.js';
 import { generateDiverseOffers } from '../engine/offers.js';
 import { NATIONAL_TOURNAMENTS, NATION_TO_CONF } from '../data/tournaments.js';
+import { getContinentalForRank, getContinentalCup, A_MATCH_DATES, getInternationalMatchType, getPrimaryCup } from '../data/cups.js';
 
 const SAVE_KEY = 'wfl_save_v1';
 const DATE_FORMAT = (year, week) => {
@@ -90,7 +91,10 @@ export const game = {
     };
 
     const seasonStartDate = { year: 2026, month: 8, day: 1 };
-    const continentalOpps = selectContinentalOpponents(startClub, world.clubs, getLeague(startLeagueId).conf);
+    // 첫 시즌엔 클럽 강도로 대륙간 출전 자격 추정 (현실: 이전 시즌 순위 사용)
+    const estimatedRank = Math.max(1, Math.round((100 - startClub.strength) / 4));
+    const startCupId = getContinentalForRank(startLeagueId, estimatedRank);
+    const continentalOpps = startCupId ? selectContinentalOpponents(startClub, world.clubs, getLeague(startLeagueId).conf, startCupId) : null;
     const fixtures = generateSeasonFixtures(player, clubs, continentalOpps, seasonStartDate);
 
     // 첫 시즌 상태
@@ -286,7 +290,9 @@ export const game = {
       player.clubStrength = myClub.strength;
     }
 
-    const continentalOpps = (myRank <= newLeague.continentalSpots) ? selectContinentalOpponents(myClub, s.world.clubs, newLeague.conf) : [];
+    // 작년 리그 순위 기반으로 대륙간 컵 결정
+    const newCupId = getContinentalForRank(player.leagueId, myRank);
+    const continentalOpps = newCupId ? selectContinentalOpponents(myClub, s.world.clubs, newLeague.conf, newCupId) : null;
     const fixtures = generateSeasonFixtures(player, newClubs, continentalOpps, s.calendar);
     s.season = makeSeasonState(player, newClubs, fixtures);
     // 새 시즌용 이벤트들 (이미 잡혀있는 미래 이적시장 이벤트는 유지 + 추가)
@@ -327,7 +333,10 @@ export const game = {
     s.player.money += Math.round(offer.fee * 0.1); // 사이닝 보너스
 
     // 새 일정 재생성 (시즌 시작일 기준)
-    const continentalOpps = selectContinentalOpponents(newClub, s.world.clubs, newLeague.conf);
+    // 이적 후 첫 시즌엔 작년 새 클럽 순위 모름 — 강도로 추정
+    const estRank = Math.max(1, Math.round((100 - newClub.strength) / 4));
+    const newCupId = getContinentalForRank(offer.leagueId, estRank);
+    const continentalOpps = newCupId ? selectContinentalOpponents(newClub, s.world.clubs, newLeague.conf, newCupId) : null;
     const seasonStart = s.calendar || { year: s.year, month: 8, day: 1 };
     const fixtures = generateSeasonFixtures(s.player, newClubs, continentalOpps, seasonStart);
     s.season = makeSeasonState(s.player, newClubs, fixtures);
@@ -381,6 +390,20 @@ function computeWeekFromCalendar(s) {
   const start = { year: s.year, month: 8, day: 1 };
   const days = daysBetween(start, s.calendar);
   return Math.max(1, Math.floor(days / 7) + 1);
+}
+
+/* ---------- 국가대표 상대 국가 랜덤 추출 ---------- */
+function pickOpponentNation(myNation, conf) {
+  const sameConfPool = {
+    UEFA: ['독일', '프랑스', '스페인', '이탈리아', '잉글랜드', '포르투갈', '네덜란드', '벨기에', '크로아티아', '폴란드', '튀르키예', '덴마크', '스웨덴', '스위스'],
+    CONMEBOL: ['브라질', '아르헨티나', '우루과이', '콜롬비아', '칠레', '에콰도르', '페루'],
+    AFC: ['일본', '한국', '호주', '이란', '사우디아라비아', '카타르', 'UAE', '우즈베키스탄', '이라크'],
+    CAF: ['모로코', '세네갈', '나이지리아', '이집트', '알제리', '튀니지', '가나', '카메룬'],
+    CONCACAF: ['미국', '멕시코', '캐나다', '코스타리카', '온두라스', '파나마', '자메이카'],
+    OFC: ['뉴질랜드', '피지', '솔로몬 제도']
+  };
+  const pool = (sameConfPool[conf] || sameConfPool.UEFA).filter(n => n !== myNation);
+  return pool[Math.floor(Math.random() * pool.length)];
 }
 
 /* ---------- 이적시장 오퍼 도착 이벤트 스케줄링 ----------
@@ -469,6 +492,34 @@ function collectTodayEvents(s) {
   offerArrivals.forEach(e => {
     events.push({ type: 'transfer_offer_arrival', window: e.window, scheduledEvent: e });
   });
+
+  // 2.7. 국가대표 A매치 (3/6/9/10/11월 정해진 날짜에 자동 친선/예선)
+  const ovr = calcOVR(s.player);
+  if (ovr >= 70 && !s.player.nationalRetired) {
+    const aMatchDate = A_MATCH_DATES.find(am =>
+      am.month === today.month && today.day >= am.startDay && today.day < am.startDay + am.days &&
+      (today.day - am.startDay) % 4 === 0 // 4일 간격으로 2경기 정도
+    );
+    if (aMatchDate && !sameDate(s.player.lastAMatchDate, today)) {
+      const conf = NATION_TO_CONF[s.player.nationality];
+      const mtInfo = getInternationalMatchType(today.year, today.month, conf);
+      const oppNation = pickOpponentNation(s.player.nationality, conf);
+      events.push({
+        type: 'fixture',
+        fixture: {
+          type: 'national',
+          opp: oppNation,
+          oppName: oppNation,
+          oppStr: 50 + Math.floor(Math.random() * 35),
+          home: Math.random() < 0.5,
+          competition: mtInfo.label,
+          round: mtInfo.type === 'wc_qualifier' ? '월드컵 예선' : mtInfo.label,
+          date: { ...today }
+        }
+      });
+      s.player.lastAMatchDate = { ...today };
+    }
+  }
 
   // 3. 국제대회 (월드컵/올림픽/아시안컵 등 — 매월 1일에 발생 가능성 체크)
   if (today.day === 1) {

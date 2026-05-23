@@ -1335,3 +1335,42 @@ VIEWS.transfers = function renderTransfersExt() {
     renderView('hub');
   };
 };
+
+/* ============================================================
+ *  매치 전 선택지 모달 (중요 경기 사전 결정)
+ * ============================================================ */
+export function showPreMatchChoice(fixture, callback) {
+  const compName = { league: '리그', cup: '컵', continental: '대륙간', national: '국가대표' }[fixture.type] || '경기';
+  const choices = [
+    { text: '🔥 공격적으로 — 승부수, 골 확률↑ 부상위험↑', effect: { ratingBonus: +0.6, injuryRisk: 0.06 } },
+    { text: '⚖️ 안정적으로 — 평소 컨디션 유지', effect: {} },
+    { text: '🛡️ 수비적으로 — 안전한 경기, 평점↓ 부상↓', effect: { ratingBonus: -0.3, injuryRisk: 0.01 } },
+    { text: '💪 풀파워 — 전후반 100% — 큰 평점↑ 큰 부상위험', effect: { ratingBonus: +1.0, injuryRisk: 0.15 } }
+  ];
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:560px;">
+      <h3>⚽ 경기 전 결정</h3>
+      <p class="text-muted">${compName} ${fixture.round ? '· ' + fixture.round : ''}</p>
+      <p style="font-size:1.1rem; margin:10px 0;">${fixture.home ? '🏠' : '✈️'} vs <strong>${escapeHtml(fixture.oppName)}</strong></p>
+      <p class="hint">감독이 오늘 경기 전략을 묻습니다.</p>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:12px;">
+        ${choices.map((c, i) => `
+          <button class="decision-choice" data-idx="${i}" style="text-align:left; padding:10px 14px;">${escapeHtml(c.text)}</button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('.decision-choice').forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx);
+      const choice = choices[idx];
+      document.body.removeChild(overlay);
+      game.log_(`🎯 경기 전: "${choice.text}"`, 'event');
+      callback(choice.effect || {});
+    };
+  });
+}
