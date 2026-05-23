@@ -2,6 +2,8 @@
  *  확장 데이터 — 포지션 / 개인상 / 연애 상대 / 미디어 NPC
  * ================================================================ */
 
+import { LEAGUES } from './world.js';
+
 /* ---------- 확장 포지션 ---------- */
 /*  group: 4대 분류 (능력치 가중치 계산용)
  *  area: 좌/중/우 (선택용 표시)  */
@@ -129,6 +131,54 @@ export const INDIVIDUAL_AWARDS = [
   // 이집트
   { id: 'epl_eg_poty',       name: '이집트 프리미어리그 MVP',          scope: 'league', leagueId: 'egy1', category: 'best',         cycle: 'season', prestige: 45, threshold: 75 }
 ];
+
+/* ---------- 모든 리그별 개인상 자동 생성 (수백 개)
+ *  각 리그마다 MVP / 득점왕 / 도움왕 / 영플레이어 / 골든글러브 / 베스트XI MVP
+ *  이미 손수 추가된 leagueId는 중복 방지 */
+(function autoGenerateLeagueAwards() {
+  const existingLeagueIds = new Set(INDIVIDUAL_AWARDS.filter(a => a.leagueId).map(a => a.leagueId));
+  for (const l of LEAGUES) {
+    // 4부까지 포함
+    if (l.tier > 4) continue;
+    // 손수 큐레이션된 리그는 일부 카테고리 빠진 것만 보강
+    const prestige = Math.max(20, Math.min(85, Math.round(l.strength * 0.75)));
+    const threshold = Math.max(60, Math.round(l.strength * 0.88));
+    const hasCurated = existingLeagueIds.has(l.id);
+
+    const candidates = [
+      { suffix: 'mvp',         name: `${l.name} MVP / 올해의 선수`,    category: 'best',        prestige, threshold },
+      { suffix: 'top_scorer',  name: `${l.name} 득점왕`,                category: 'top_scorer',  prestige: Math.round(prestige * 0.92) },
+      { suffix: 'top_assist',  name: `${l.name} 도움왕`,                category: 'top_assist',  prestige: Math.round(prestige * 0.78) },
+      { suffix: 'young',       name: `${l.name} 영플레이어상`,          category: 'young',       prestige: Math.round(prestige * 0.62), threshold: Math.max(55, threshold - 8), requires: 'young' },
+      { suffix: 'gk',          name: `${l.name} 최우수 골키퍼`,         category: 'goalkeeper',  prestige: Math.round(prestige * 0.68), threshold: Math.max(55, threshold - 5), requires: 'gk' },
+      { suffix: 'bestXI',      name: `${l.name} 베스트 XI 선정`,        category: 'best',        prestige: Math.round(prestige * 0.55), threshold: Math.max(55, threshold - 12) }
+    ];
+
+    for (const c of candidates) {
+      const id = `${l.id}_${c.suffix}`;
+      // 중복 ID 방지
+      if (INDIVIDUAL_AWARDS.some(a => a.id === id)) continue;
+      // 손수 큐레이션된 리그 + best 카테고리는 이미 있을 가능성 → 베스트XI 정도만
+      if (hasCurated && c.category === 'best' && c.suffix !== 'bestXI') {
+        // 중복될 가능성 있음 — 자동 생성된 MVP는 이름 다르게
+        if (INDIVIDUAL_AWARDS.some(a => a.leagueId === l.id && a.category === 'best' && a.id.includes('poty'))) continue;
+      }
+      INDIVIDUAL_AWARDS.push({
+        id,
+        name: c.name,
+        scope: 'league',
+        leagueId: l.id,
+        category: c.category,
+        cycle: 'season',
+        prestige: c.prestige,
+        threshold: c.threshold,
+        requires: c.requires
+      });
+    }
+  }
+})();
+
+console.log(`[awards] 총 ${INDIVIDUAL_AWARDS.length}개의 개인상 등록됨`);
 
 /* ---------- 연애 상대 프로필 풀 ---------- */
 /*  type: civilian | model | influencer | athlete | celebrity | heiress | musician
@@ -268,17 +318,32 @@ export const NATIONALITY_LIST = [
   { code: 'NZL', name: '뉴질랜드',    flag: '🇳🇿' }
 ];
 
-/* ---------- 능력치 업그레이드 비용 공식 (돈으로 사기) ---------- */
+/* ---------- 능력치 업그레이드 비용 공식 (돈으로 사기) ----------
+ *  초반(낮은 능력치)은 매우 저렴, 능력치 75+부터 가파른 상승
+ *  16~22세는 페널티 없음, 30세부터 1.2배, 35세는 5배
+ */
 export function statUpgradeCost(currentValue, age) {
-  // 기본 비용: 현재 능력치^1.6
-  const base = Math.pow(currentValue, 1.6) * 0.7;
-  // 나이 페널티: 25세 미만 1배, 30세 1.5배, 33세 2.5배, 35+ 5배
+  const c = currentValue;
+  let base;
+  if (c < 45)      base = 1 + (c - 40);                  // 40: 1만, 44: 5만
+  else if (c < 55) base = 5 + (c - 45);                  // 50: 10만
+  else if (c < 65) base = 15 + (c - 55) * 2;             // 60: 25만, 64: 33만
+  else if (c < 70) base = 35 + (c - 65) * 5;             // 69: 60만
+  else if (c < 75) base = 65 + (c - 70) * 10;            // 74: 105만
+  else if (c < 80) base = 120 + (c - 75) * 25;           // 79: 230만
+  else if (c < 85) base = 270 + (c - 80) * 60;           // 84: 540만
+  else if (c < 90) base = 580 + (c - 85) * 180;          // 89: 1380만
+  else if (c < 95) base = 1500 + (c - 90) * 500;         // 94: 3500만
+  else             base = 4000 + (c - 95) * 1500;        // 99: 10000만
+
   let ageMult = 1.0;
-  if (age >= 35) ageMult = 5.0;
-  else if (age >= 33) ageMult = 2.5;
-  else if (age >= 30) ageMult = 1.5;
-  else if (age >= 27) ageMult = 1.1;
-  return Math.round(base * ageMult);
+  if (age >= 36)       ageMult = 6.0;
+  else if (age >= 34)  ageMult = 3.0;
+  else if (age >= 32)  ageMult = 1.8;
+  else if (age >= 30)  ageMult = 1.3;
+  else if (age >= 28)  ageMult = 1.1;
+
+  return Math.max(1, Math.round(base * ageMult));
 }
 
 /* ---------- 업그레이드 효과 (나이 따라 폭이 줄어듦) ---------- */

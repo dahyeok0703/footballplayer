@@ -103,7 +103,10 @@ export const game = {
       year: 2026,
       week: 1,
       calendar: { ...seasonStartDate },
-      scheduledEvents: scheduleSeasonDecisions(seasonStartDate),
+      scheduledEvents: [
+        ...scheduleSeasonDecisions(seasonStartDate),
+        ...scheduleTransferOffers(seasonStartDate)
+      ],
       offers: [],
       pendingDecision: null,
       flags: {},
@@ -247,8 +250,16 @@ export const game = {
     const seasonAwards = evaluateSeasonAwards(s, seasonReport);
     seasonReport.awards = seasonAwards;
 
-    // 이적 오퍼 생성 (다양화된 시스템: 5~15개, 다양한 유형)
-    s.offers = generateDiverseOffers(s, avgRating);
+    // 이적 오퍼는 이적시장(여름/겨울)에 분산 도착함 — 시즌 종료 시 자동 생성 안 함
+    // 기존 미수락 오퍼는 유지 (계속 협상 가능)
+    // 시즌 종료 직후라 한 두건 정도는 일괄 도착 가능
+    if (Math.random() < 0.5) {
+      const seasonEndOffers = generateDiverseOffers(s, avgRating).slice(0, rand(1, 3));
+      seasonEndOffers.forEach((o, i) => {
+        o.id = `eosof_${s.year}_${i}`;
+        s.offers.push(o);
+      });
+    }
 
     // 자동 승강 처리 (선수 따라감)
     if (promoted) {
@@ -278,7 +289,13 @@ export const game = {
     const continentalOpps = (myRank <= newLeague.continentalSpots) ? selectContinentalOpponents(myClub, s.world.clubs, newLeague.conf) : [];
     const fixtures = generateSeasonFixtures(player, newClubs, continentalOpps, s.calendar);
     s.season = makeSeasonState(player, newClubs, fixtures);
-    s.scheduledEvents = scheduleSeasonDecisions(s.calendar);
+    // 새 시즌용 이벤트들 (이미 잡혀있는 미래 이적시장 이벤트는 유지 + 추가)
+    const futureScheduled = (s.scheduledEvents || []).filter(e => compareDate(e.date, s.calendar) >= 0);
+    s.scheduledEvents = [
+      ...futureScheduled,
+      ...scheduleSeasonDecisions(s.calendar),
+      ...scheduleTransferOffers(s.calendar)
+    ];
     player.tournamentsThisSeason = [];
 
     return {
@@ -366,6 +383,50 @@ function computeWeekFromCalendar(s) {
   return Math.max(1, Math.floor(days / 7) + 1);
 }
 
+/* ---------- 이적시장 오퍼 도착 이벤트 스케줄링 ----------
+ *  fromCalendar 기준으로 향후 12개월 동안 8~14개 오퍼 분산.
+ *  여름 윈도우(6/15 - 8/31)에 60%, 겨울 윈도우(1/1 - 1/31)에 30%, 나머지 10% 산발 */
+function scheduleTransferOffers(fromCalendar) {
+  const events = [];
+  const numOffers = 8 + Math.floor(Math.random() * 7); // 8-14
+  for (let i = 0; i < numOffers; i++) {
+    const r = Math.random();
+    let m, d, y = fromCalendar.year;
+    if (r < 0.6) {
+      // 여름 윈도우: 6월 15일 ~ 8월 31일
+      m = pick([6, 6, 7, 7, 7, 8, 8]);
+      d = m === 6 ? 15 + Math.floor(Math.random() * 16) : 1 + Math.floor(Math.random() * 31);
+    } else if (r < 0.9) {
+      // 겨울 윈도우: 1월
+      m = 1;
+      d = 1 + Math.floor(Math.random() * 31);
+    } else {
+      // 산발적 오퍼 (윈도우 밖)
+      m = pick([3, 4, 5, 9, 10, 11, 12]);
+      d = 1 + Math.floor(Math.random() * 27);
+    }
+    // 과거가 되지 않도록 보정
+    if (m < fromCalendar.month || (m === fromCalendar.month && d <= fromCalendar.day)) y++;
+    events.push({
+      type: 'transfer_offer_arrival',
+      date: { year: y, month: m, day: d },
+      window: r < 0.6 ? 'summer' : (r < 0.9 ? 'winter' : 'other')
+    });
+  }
+  return events;
+}
+
+/* ---------- 단일 오퍼 생성 (이적시장 도착용) ---------- */
+export function generateOneOffer(state) {
+  const ss = state.season;
+  const avgRating = ss.ratings.length ? (ss.ratings.reduce((a, b) => a + b, 0) / ss.ratings.length) : 6.5;
+  const offers = generateDiverseOffers(state, avgRating);
+  if (offers.length === 0) return null;
+  const offer = offers[Math.floor(Math.random() * offers.length)];
+  offer.id = `arr_${state.year}_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+  return offer;
+}
+
 /* ---------- 하루 전진 (주차 변경 시 백그라운드 처리) ---------- */
 function advanceOneDay(s) {
   s.calendar = nextDay(s.calendar);
@@ -401,6 +462,12 @@ function collectTodayEvents(s) {
   const decisionsToday = s.scheduledEvents.filter(e => e.type === 'decision' && sameDate(e.date, today));
   decisionsToday.forEach(e => {
     events.push({ type: 'decision', decisionId: e.decisionId, scheduledEvent: e });
+  });
+
+  // 2.5. 이적시장 오퍼 도착 (여름/겨울 윈도우)
+  const offerArrivals = s.scheduledEvents.filter(e => e.type === 'transfer_offer_arrival' && sameDate(e.date, today));
+  offerArrivals.forEach(e => {
+    events.push({ type: 'transfer_offer_arrival', window: e.window, scheduledEvent: e });
   });
 
   // 3. 국제대회 (월드컵/올림픽/아시안컵 등 — 매월 1일에 발생 가능성 체크)

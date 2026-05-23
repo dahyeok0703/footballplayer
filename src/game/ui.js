@@ -149,6 +149,16 @@ export function refreshStatus() {
     $('btn-advance').textContent = p.retired ? '은퇴' : '▶ 진행';
   }
   $('btn-advance').disabled = p.retired;
+
+  // 이적 버튼에 대기중 오퍼 개수 배지
+  const transferBtn = document.querySelector('#nav button[data-view="transfers"]');
+  if (transferBtn) {
+    const cnt = (s.offers || []).length;
+    transferBtn.textContent = cnt > 0 ? `이적 (${cnt})` : '이적';
+    transferBtn.style.background = cnt > 0 ? 'var(--accent-2)' : '';
+    transferBtn.style.color = cnt > 0 ? 'var(--bg)' : '';
+    transferBtn.style.fontWeight = cnt > 0 ? 'bold' : '';
+  }
 }
 
 /* ---------- 다음 이벤트 찾기 (날짜 + 라벨) ---------- */

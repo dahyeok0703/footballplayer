@@ -2,7 +2,7 @@
  *  메인 엔트리 — 일별 자동 진행 + 이벤트 처리
  * ================================================================ */
 
-import { game } from './game/state.js';
+import { game, generateOneOffer } from './game/state.js';
 import { renderStart, renderView, refreshStatus, showGame, showMatchModal, showSeasonEndModal, renderEnd, getTrainAlloc, showDecisionModal, showTournamentCallupModal } from './game/ui.js';
 import { simulateMatch, recordMatch, applyTraining, calcOVR } from './engine/sim.js';
 import { applyPerMatchGrowth } from './engine/social.js';
@@ -63,6 +63,8 @@ async function processEvents(events) {
       // 결정 모달은 비동기로 사용자가 선택해야 진행
     } else if (ev.type === 'tournament_callup') {
       await processTournamentCallup(ev);
+    } else if (ev.type === 'transfer_offer_arrival') {
+      processOfferArrival(ev);
     } else if (ev.type === 'season_end') {
       await processSeasonEnd();
     } else if (ev.type === 'break') {
@@ -188,6 +190,18 @@ async function processSeasonEnd() {
     }
     showSeasonEndModal(seasonResult);
   }
+}
+
+function processOfferArrival(ev) {
+  const s = game.state;
+  const offer = generateOneOffer(s);
+  if (offer) {
+    s.offers = s.offers || [];
+    s.offers.push(offer);
+    const windowLabel = ev.window === 'summer' ? '여름' : (ev.window === 'winter' ? '겨울' : '');
+    game.log_(`📩 ${windowLabel ? `[${windowLabel} 이적시장] ` : ''}${offer.clubName}에서 이적 제안! (${offer.roleLabel}) — \"이적\" 메뉴 확인`, 'event');
+  }
+  s.scheduledEvents = s.scheduledEvents.filter(e => e !== ev.scheduledEvent);
 }
 
 function handleDecisionResolved() {
