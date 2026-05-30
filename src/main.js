@@ -3,12 +3,13 @@
  * ================================================================ */
 
 import { game, generateOneOffer } from './game/state.js';
-import { renderStart, renderView, refreshStatus, showGame, showMatchModal, showSeasonEndModal, renderEnd, getTrainAlloc, showDecisionModal, showTournamentCallupModal, showPreMatchChoice } from './game/ui.js';
+import { renderStart, renderView, refreshStatus, showGame, showMatchModal, showSeasonEndModal, renderEnd, getTrainAlloc, showDecisionModal, showTournamentCallupModal, showPreMatchChoice, showPreMatchHighlightModal, showHighlightModal, showHighlightResult, showPostMatchSummary } from './game/ui.js';
 import { simulateMatch, recordMatch, applyTraining, calcOVR } from './engine/sim.js';
 import { applyPerMatchGrowth } from './engine/social.js';
 import { dateLabel, addDays } from './engine/calendar.js';
 import { getContinentalCup, getPrimaryCup, getDomesticCups } from './data/cups.js';
 import { uid, pick, rand, chance } from './engine/generator.js';
+import { selectHighlights, evaluateChoice, initMatchState, applyHighlightOutcome, finalizeMatch } from './engine/match.js';
 
 let busy = false;
 
@@ -77,58 +78,63 @@ async function processEvents(events) {
 
 async function processFixture(fixture) {
   const s = game.state;
-  if (s.player.injury > 0) {
-    game.log_(`🚑 ${dateLabel(fixture.date)} vs ${fixture.oppName} 결장 (부상 ${s.player.injury}주)`, 'bad');
+  // 부상 결장 처리는 모달 안에서 함
+
+  // ----- 경기 전: 전술/역할 선택 + 출전 상태 확인 -----
+  const preMatch = await new Promise(res => showPreMatchHighlightModal(fixture, s.player, res));
+  if (preMatch.skipMatch) {
+    game.log_(`🚑 ${dateLabel(fixture.date)} vs ${fixture.oppName} 결장`, 'bad');
     return;
   }
+  const { tactic, role, status } = preMatch;
 
-  // 중요 경기 사전 선택지 (30% 확률 + 컵/대륙간 결승은 무조건)
-  const isImportant = fixture.type === 'continental' || (fixture.type === 'cup' && ['8강','준결승','결승'].includes(fixture.round));
-  if (isImportant || Math.random() < 0.3) {
-    await new Promise(res => {
-      showPreMatchChoice(fixture, (choiceEffect) => {
-        if (choiceEffect) {
-          s.flags = s.flags || {};
-          if (choiceEffect.ratingBonus) s.flags.nextMatchBonus = (s.flags.nextMatchBonus || 0) + choiceEffect.ratingBonus;
-          if (choiceEffect.injuryRisk && chance(choiceEffect.injuryRisk)) {
-            s.player.injury = rand(1, 4);
-            game.log_(`🚑 경기 전 부상! ${s.player.injury}주 결장`, 'bad');
-          }
-        }
-        res();
-      });
-    });
-    if (s.player.injury > 0) return; // 부상으로 결장
+  // ----- 경기 중: 하이라이트 시퀀스 -----
+  const highlights = selectHighlights(s.player, fixture, role);
+  const matchState = initMatchState(fixture, tactic, role);
+
+  // 결정 효과 (사전 결정에서 받은 보너스)
+  if (s.flags && s.flags.nextMatchBonus) {
+    matchState.ratingPoints += s.flags.nextMatchBonus * 10;
+    s.flags.nextMatchBonus = 0;
+  }
+  // 후보 출전이면 평점 시작점 -5
+  if (status === 'bench') matchState.ratingPoints -= 5;
+
+  for (let i = 0; i < highlights.length; i++) {
+    const hl = highlights[i];
+    const choiceIdx = await new Promise(res => showHighlightModal(hl, i + 1, highlights.length, res));
+    const outcome = evaluateChoice(s.player, hl, choiceIdx, tactic, role, matchState);
+    applyHighlightOutcome(matchState, outcome);
+    await new Promise(res => showHighlightResult(outcome, res));
+    if (matchState.injury) break; // 부상이면 조기 종료
   }
 
-  return new Promise(resolve => {
-    const result = simulateMatch(s.player, fixture);
-    // 결정 효과 (다음 매치 보너스) 적용
-    if (s.flags && s.flags.nextMatchBonus) {
-      result.rating = Math.max(3, Math.min(10, result.rating + s.flags.nextMatchBonus));
-      s.flags.nextMatchBonus = 0;
-    }
-    recordMatch(game.state, fixture, result);
-    const gains = applyPerMatchGrowth(game.state, fixture, result);
-    if (gains && gains.length > 0) {
-      const up = gains.filter(g => g.change > 0).length;
-      const down = gains.filter(g => g.change < 0).length;
-      if (up > 0) game.log_(`📈 평점 ${result.rating} → 능력치 +${up}`, 'good');
-      if (down > 0) game.log_(`📉 부진으로 능력치 -${down}`, 'bad');
-    }
-    const cls = result.result === 'W' ? 'good' : (result.result === 'L' ? 'bad' : 'event');
-    const compName = { league: '리그', cup: '컵', continental: '대륙간', national: '국대' }[fixture.type] || '';
-    game.log_(`⚽ ${dateLabel(fixture.date)} ${compName} vs ${fixture.oppName} ${result.myGoals}-${result.oppGoals} (${result.result}) 평점 ${result.rating}`, cls);
+  // ----- 경기 마무리 -----
+  const result = finalizeMatch(s.player, fixture, matchState);
 
-    // 컵/대륙간 진출 시 다음 라운드 동적 추가
-    if (result.result === 'W' || (result.result === 'D' && Math.random() < 0.4)) {
-      advanceCupRound(fixture);
-    } else if (fixture.type === 'cup' || (fixture.type === 'continental' && fixture.round !== '조별리그')) {
-      game.log_(`🚪 ${fixture.competition} ${fixture.round} 탈락`, 'bad');
-    }
+  // 게임 상태에 기록
+  recordMatch(game.state, fixture, result);
+  const gains = applyPerMatchGrowth(game.state, fixture, result);
+  if (gains && gains.length > 0) {
+    const up = gains.filter(g => g.change > 0).length;
+    const down = gains.filter(g => g.change < 0).length;
+    if (up > 0) game.log_(`📈 평점 ${result.rating} → 능력치 +${up}`, 'good');
+    if (down > 0) game.log_(`📉 부진으로 능력치 -${down}`, 'bad');
+  }
 
-    showMatchModal(fixture, result, resolve);
-  });
+  const cls = result.result === 'W' ? 'good' : (result.result === 'L' ? 'bad' : 'event');
+  const compName = { league: '리그', cup: '컵', continental: '대륙간', national: '국대' }[fixture.type] || '';
+  game.log_(`⚽ ${dateLabel(fixture.date)} ${compName} vs ${fixture.oppName} ${result.myGoals}-${result.oppGoals} (${result.result}) 평점 ${result.rating}`, cls);
+
+  // 컵/대륙간 진출 시 다음 라운드 동적 추가
+  if (result.result === 'W' || (result.result === 'D' && Math.random() < 0.4)) {
+    advanceCupRound(fixture);
+  } else if (fixture.type === 'cup' || (fixture.type === 'continental' && fixture.round !== '조별리그')) {
+    game.log_(`🚪 ${fixture.competition} ${fixture.round} 탈락`, 'bad');
+  }
+
+  // 경기 후 종합 화면
+  await new Promise(res => showPostMatchSummary(fixture, result, matchState, res));
 }
 
 /* ---------- 컵/대륙간 다음 라운드 동적 추가 ---------- */

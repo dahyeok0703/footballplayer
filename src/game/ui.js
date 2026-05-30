@@ -1441,3 +1441,197 @@ export function showPreMatchChoice(fixture, callback) {
     };
   });
 }
+
+/* ============================================================
+ *  하이라이트 선택형 매치 UI
+ * ============================================================ */
+import { TACTICS, ROLES, determineStartingStatus } from '../engine/match.js';
+
+/* 경기 전 모달 — 전술 + 역할 + 출전 상태 */
+export function showPreMatchHighlightModal(fixture, player, callback) {
+  const status = determineStartingStatus(player, fixture);
+  const ovr = calcOVR(player);
+  const compName = { league: '리그', cup: '컵', continental: '대륙간', national: '국가대표' }[fixture.type] || '경기';
+
+  if (status === 'absent_injury' || status === 'absent_squad') {
+    // 결장
+    const overlay = document.createElement('div');
+    overlay.id = 'modal-overlay';
+    overlay.innerHTML = `
+      <div class="modal-content" style="max-width:500px;">
+        <h3>📋 ${compName} 경기 명단</h3>
+        <p>${fixture.home ? '🏠' : '✈️'} vs <strong>${escapeHtml(fixture.oppName)}</strong></p>
+        <p class="text-bad" style="font-size:1.1rem; margin:14px 0;">
+          ${status === 'absent_injury' ? '🚑 부상으로 결장' : '😞 명단 제외 — 출전 시간 부족'}
+        </p>
+        <p class="hint">${status === 'absent_injury' ? '회복 후 다시 도전.' : '훈련/업그레이드로 폼을 끌어올려야 함.'}</p>
+        <div class="actions">
+          <button class="primary" id="match-skip">확인</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    document.getElementById('match-skip').onclick = () => {
+      document.body.removeChild(overlay);
+      callback({ skipMatch: true });
+    };
+    return;
+  }
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:600px;">
+      <h3>⚽ ${compName} 경기 준비</h3>
+      <p class="text-muted">${fixture.home ? '🏠' : '✈️'} vs <strong>${escapeHtml(fixture.oppName)}</strong> · 상대 강도 ${fixture.oppStr}</p>
+      <p>출전 상태: <strong class="${status === 'starter' ? 'text-good' : 'text-warn'}">${status === 'starter' ? '⚽ 선발' : '🪑 후보 (벤치)'}</strong></p>
+      <p>내 OVR: <strong>${ovr}</strong> · 사기: <strong>${player.morale}</strong>/100 · 부상위험: ${player.age > 30 ? '중' : '낮음'}</p>
+
+      <h4 style="margin-top:14px;">감독 전술 선택</h4>
+      <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px;">
+        ${TACTICS.map((t, i) => `
+          <label class="tactic-opt" style="background:var(--bg-2); padding:8px; border-radius:6px; cursor:pointer;">
+            <input type="radio" name="tactic" value="${t.id}" ${i === 0 ? 'checked' : ''}>
+            <strong>${t.name}</strong>
+            <small style="display:block; color:var(--muted); font-size:0.78rem;">${t.desc}</small>
+          </label>
+        `).join('')}
+      </div>
+
+      <h4 style="margin-top:12px;">내 역할 선택</h4>
+      <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px;">
+        ${ROLES.map((r, i) => `
+          <label class="role-opt" style="background:var(--bg-2); padding:8px; border-radius:6px; cursor:pointer;">
+            <input type="radio" name="role" value="${r.id}" ${i === 3 ? 'checked' : ''}>
+            <strong>${r.name}</strong>
+            <small style="display:block; color:var(--muted); font-size:0.78rem;">${r.desc}</small>
+          </label>
+        `).join('')}
+      </div>
+
+      <div class="actions" style="margin-top:16px;">
+        <button class="primary" id="match-start">⚽ 경기 시작</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('match-start').onclick = () => {
+    const tactic = overlay.querySelector('input[name=tactic]:checked').value;
+    const role = overlay.querySelector('input[name=role]:checked').value;
+    document.body.removeChild(overlay);
+    callback({ tactic, role, status });
+  };
+}
+
+/* 하이라이트 모달 — 선택지 + 결과 표시 */
+export function showHighlightModal(highlight, current, total, callback) {
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:580px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h3>🎬 하이라이트 ${current}/${total}</h3>
+        <span class="text-muted">${highlight.minute}'</span>
+      </div>
+      <p style="font-size:1.05rem; margin:12px 0; line-height:1.5;">${escapeHtml(highlight.text)}</p>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+        ${highlight.choices.map((c, i) => `
+          <button class="decision-choice" data-idx="${i}" style="text-align:left; padding:10px 14px;">
+            ${escapeHtml(c.label)}
+            <small style="display:block; color:var(--muted); font-size:0.75rem; margin-top:2px;">${getStatLabel(c.stat)} 능력치 사용</small>
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('.decision-choice').forEach(btn => {
+    btn.onclick = () => {
+      const idx = parseInt(btn.dataset.idx);
+      document.body.removeChild(overlay);
+      callback(idx);
+    };
+  });
+}
+
+function getStatLabel(stat) {
+  return STAT_NAMES[stat] || stat;
+}
+
+/* 하이라이트 결과 짧게 표시 (잠깐 보여주기) */
+export function showHighlightResult(outcome, callback) {
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  const cls = outcome.success ? 'text-good' : 'text-bad';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:480px;">
+      <p style="font-size:1.1rem; margin:10px 0; line-height:1.5;" class="${cls}">${escapeHtml(outcome.narrative)}</p>
+      <div style="display:flex; gap:14px; justify-content:center; margin:14px 0; font-size:0.9rem;">
+        ${outcome.goal ? '<span class="text-good">⚽ 골!</span>' : ''}
+        ${outcome.assist ? '<span class="text-info">🅰 어시!</span>' : ''}
+        <span class="${outcome.rating > 0 ? 'text-good' : 'text-bad'}">평점 ${outcome.rating > 0 ? '+' : ''}${outcome.rating}</span>
+        ${outcome.fan ? `<span class="${outcome.fan > 0 ? 'text-good' : 'text-bad'}">팬 ${outcome.fan > 0 ? '+' : ''}${outcome.fan}</span>` : ''}
+      </div>
+      <div class="actions"><button class="primary" id="hl-next">계속 ▶</button></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('hl-next').onclick = () => {
+    document.body.removeChild(overlay);
+    callback();
+  };
+}
+
+/* 경기 후 종합 화면 */
+export function showPostMatchSummary(fixture, result, matchState, callback) {
+  const cls = result.result === 'W' ? 'win' : (result.result === 'L' ? 'loss' : 'draw');
+  const ratingCls = result.rating >= 7.5 ? 'good' : (result.rating < 5.5 ? 'bad' : 'avg');
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:640px;">
+      <h3>📊 경기 종료</h3>
+      <p class="text-muted">${fixture.competition} ${fixture.round ? '· ' + fixture.round : ''}</p>
+
+      <div class="match-score" style="font-size:1.5rem;">
+        <span>${fixture.home ? '🏠 우리' : escapeHtml(fixture.oppName)}</span>
+        <span class="vs ${cls}">${result.myGoals} <small>vs</small> ${result.oppGoals}</span>
+        <span>${fixture.home ? escapeHtml(fixture.oppName) : '우리 ✈️'}</span>
+      </div>
+
+      <div style="text-align:center; margin:12px 0;">
+        <p>개인 평점 <span class="match-rating ${ratingCls}">${result.rating}</span>
+        ${result.goals ? ` · <span class="text-good">⚽ ${result.goals}골</span>` : ''}
+        ${result.assists ? ` · <span class="text-info">🅰 ${result.assists}어시</span>` : ''}
+        </p>
+        ${result.injury > 0 ? `<p class="text-bad">🚑 부상! ${result.injury}주 결장</p>` : ''}
+      </div>
+
+      <h4>⭐ 결정적 장면</h4>
+      <div style="background:var(--bg-2); padding:10px; border-radius:6px; margin-bottom:10px;">
+        ${result.keyMoments.length === 0 ? '<p class="hint">결정적 장면 없음</p>' :
+          result.keyMoments.map(km => `<p style="font-size:0.88rem; margin:4px 0;">${km.minute}' — ${escapeHtml(km.narrative)}</p>`).join('')}
+      </div>
+
+      <h4>🎙 감독 평가</h4>
+      <p style="background:var(--bg-2); padding:8px; border-radius:6px; font-size:0.9rem; font-style:italic;">${escapeHtml(result.coachFeedback)}</p>
+
+      <h4>📰 언론 헤드라인</h4>
+      <p style="background:var(--bg-2); padding:8px; border-radius:6px; font-size:0.9rem;">${escapeHtml(result.pressHeadline)}</p>
+
+      <h4>👥 팬 반응</h4>
+      <div style="background:var(--bg-2); padding:8px; border-radius:6px; font-size:0.85rem;">
+        ${result.fanComments.map(fc => `<p style="margin:3px 0;">• ${escapeHtml(fc)}</p>`).join('')}
+      </div>
+
+      <div class="actions" style="margin-top:14px;">
+        <button class="primary" id="post-close">확인</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('post-close').onclick = () => {
+    document.body.removeChild(overlay);
+    callback();
+  };
+}
