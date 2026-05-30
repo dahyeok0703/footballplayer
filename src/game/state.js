@@ -69,23 +69,49 @@ export const game = {
     }
     generateClubRoster(startClub);
 
-    // 초기 능력치 — 사용자 선택 시작 OVR에 맞춰 스케일
+    // 초기 능력치 — 사용자 선택 시작 OVR에 정확히 일치하도록 자동 보정
+    // 1) 포지션 주특기 능력치는 시작 OVR 수준, 비주특기는 -6~-12 낮춤
     const stats = {};
-    const baseStat = startOvr - 12; // 시작 OVR 50이면 baseStat=38, 그 위주로 분포
-    Object.keys({ speed: 1, shooting: 1, passing: 1, dribbling: 1, defending: 1, physical: 1, mental: 1, reflex: 1, handling: 1, positioning: 1, kicking: 1 }).forEach(k => {
-      stats[k] = clamp(baseStat + rand(0, 10), 25, 90);
+    const allKeys = ['speed','shooting','passing','dribbling','defending','physical','mental','reflex','handling','positioning','kicking'];
+    const posStats = POSITION_STATS[groupOf(position)];
+    allKeys.forEach(k => {
+      if (posStats.includes(k)) stats[k] = startOvr;
+      else stats[k] = clamp(startOvr - rand(6, 12), 25, 90);
     });
-    POSITION_STATS[groupOf(position)].forEach(k => {
-      stats[k] = clamp(stats[k] + rand(5, 12), 30, 95);
-    });
+    // 2) OVR 계산 후 정확히 일치하도록 주특기 스탯 일괄 보정
+    const tempPlayer = { position, stats };
+    const calcOvrNow = () => {
+      const w = { GK:{reflex:0.30,handling:0.25,positioning:0.20,kicking:0.10,speed:0.05,mental:0.10},
+                  DF:{defending:0.30,physical:0.25,speed:0.15,passing:0.10,mental:0.15,shooting:0.05},
+                  MF:{passing:0.30,dribbling:0.20,mental:0.20,physical:0.10,shooting:0.10,defending:0.10},
+                  FW:{shooting:0.30,dribbling:0.25,speed:0.20,passing:0.10,physical:0.10,mental:0.05} }[groupOf(position)];
+      let o = 0;
+      for (const [s, weight] of Object.entries(w)) o += (stats[s] || 50) * weight;
+      return Math.round(o);
+    };
+    let currentOvr = calcOvrNow();
+    const diff = startOvr - currentOvr;
+    if (diff !== 0) {
+      posStats.forEach(k => { stats[k] = clamp(stats[k] + diff, 25, 99); });
+    }
+    // 3) 검증
+    currentOvr = calcOvrNow();
+    if (currentOvr !== startOvr) {
+      // 미세 조정: 첫 번째 주특기 스탯에 차이를 직접 반영
+      const k = posStats[0];
+      const need = (startOvr - currentOvr);
+      stats[k] = clamp(stats[k] + need * 4, 25, 99); // 가중치 25%면 4배로 보정
+    }
 
-    // 잠재력: ★1 ~ ★6 까지. ★6는 잠재력 95~99 (메시급)
+    // 잠재력: ★1 ~ ★6
     let potential;
     if (talent >= 6) {
       potential = clamp(95 + rand(0, 4), 95, 99);  // ★6: 95~99
     } else {
-      potential = clamp(60 + talent * 6 + rand(-3, 5), 55, 95);  // ★1~★5: 65~92
+      potential = clamp(60 + talent * 6 + rand(-3, 5), 55, 95);
     }
+    // 시작 OVR이 잠재력보다 높으면 잠재력 상향 (모순 방지)
+    if (potential < startOvr) potential = clamp(startOvr + rand(2, 8), startOvr, 99);
 
     const player = {
       id: 'me',

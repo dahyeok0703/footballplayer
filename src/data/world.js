@@ -395,3 +395,104 @@ export const POOL_BY_CODE = {
 export function getLeague(id) { return LEAGUES.find(l => l.id === id); }
 export function getLeaguesByConf(conf) { return LEAGUES.filter(l => l.conf === conf); }
 export function getTopLeagues(n = 20) { return [...LEAGUES].sort((a, b) => b.strength - a.strength).slice(0, n); }
+
+/* ---------- 리그별 시즌 경기 수 (실제 데이터 기반) ----------
+ *  표준: 2 × (size - 1) — 더블 라운드로빈
+ *  특수 포맷 (3RR + split / 4RR / 토너먼트 분할) 명시
+ */
+const SEASON_MATCH_OVERRIDES = {
+  // === UEFA 특수 포맷 ===
+  sco1: 38, // 12팀 3RR + 상위/하위 split (12*3=36 + 추가 라운드)
+  cro1: 36, // 10팀 4RR (10*4=40 → 실제 36)
+  sui1: 36, // 12팀 3RR
+  aut1: 32, // 12팀 22라 regular + 10라 split
+  den1: 32, // 12팀 22+10 split
+  gre1: 36, // 14팀 26 regular + 10 playoff
+  cze1: 35, // 16팀 30 + 5 split
+  isl1: 22, // 12팀 단일 라운드로빈
+  ire1: 36, // 10팀 4RR (단순화)
+  isr1: 36, // 14팀 26 + 10 split
+  hun1: 33, // 12팀 3RR
+  svk1: 33, // 12팀 3RR
+  cyp1: 36, // 14팀 26 + 10
+  svn1: 36, // 10팀 4RR
+  fin1: 27, // 12팀 22~27 (단축)
+  nor1: 30, // 16팀 더블 RR
+  swe1: 30, // 16팀 더블 RR
+  rus1: 30, // 16팀 더블 RR
+  ukr1: 30, // 16팀 더블 RR
+
+  // === AFC 특수 포맷 ===
+  kor1: 38, // K리그1 12팀 3RR + final 5라
+  kor2: 39, // K리그2 13팀 3RR
+  jpn1: 38, // J1 20팀 더블 RR
+  jpn2: 42, // J2 22팀 더블 RR
+  chn1: 30, // CSL 16팀 더블 RR
+  sau1: 34, // SPL 18팀 더블 RR
+  uae1: 26, // UAE 14팀 더블 RR
+  qat1: 22, // QSL 12팀 더블 RR
+  irn1: 30, // 16팀 더블 RR
+  uzb1: 26, // 14팀 더블 RR
+  tha1: 30, // 16팀 더블 RR
+  vie1: 26, // 14팀 더블 RR
+  aus1: 27, // A-League 12팀 (22 + 5 extra) — 부분 단축
+  ind1: 22, // ISL 12팀 더블 RR
+
+  // === CONMEBOL 특수 포맷 ===
+  bra1: 38, // 20팀 더블 RR
+  bra2: 38,
+  bra3: 19, // 단일 라운드로빈
+  arg1: 27, // Liga Profesional Apertura 단축
+  arg2: 38, // Primera Nacional 더블 RR
+  col1: 40, // 두 토너먼트 (Apertura + Clausura 각 20)
+  uru1: 30, // 16팀 더블 RR
+  chi1: 30, // 16팀 더블 RR
+  par1: 22, // 12팀 더블 RR
+  per1: 36, // Liga 1 19팀 단순화
+  ecu1: 30, // 16팀 더블 RR
+  bol1: 30, // 16팀 더블 RR
+  ven1: 30,
+
+  // === CONCACAF ===
+  usa1: 34, // MLS 컨퍼런스제 (단순화)
+  usa2: 34, // USL Champ
+  mex1: 34, // Liga MX (Apertura + Clausura 각 17)
+  mex2: 28, // Liga Expansión
+  can1: 28, // CPL 8팀
+  crc1: 22, // 12팀 더블 RR
+  hon1: 18, // 10팀 더블 RR
+  pan1: 18, // 10팀 더블 RR
+  jam1: 22, // 12팀 더블 RR
+  slv1: 22,
+  hai1: 30,
+
+  // === CAF ===
+  egy1: 34, // 18팀 더블 RR
+  mar1: 30, // 16팀 더블 RR
+  tun1: 26, // 14팀 단축
+  alg1: 30,
+  rsa1: 30,
+  nga1: 38, // 20팀 더블 RR
+  gha1: 34, // 18팀 더블 RR
+  sen1: 26,
+  civ1: 26,
+  cmr1: 34,
+  cod1: 26,
+  ken1: 34,
+  tan1: 30,
+  eth1: 30,
+  zam1: 34,
+  ang1: 30,
+  zim1: 30,
+  sud1: 34,
+  lby1: 30,
+  mli1: 34,
+
+  // === OFC ===
+  nzl1: 18, // 10팀 더블 RR
+  fij1: 14
+};
+
+export function getSeasonMatchCount(league) {
+  return SEASON_MATCH_OVERRIDES[league.id] || 2 * (league.size - 1);
+}

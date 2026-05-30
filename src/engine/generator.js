@@ -2,7 +2,7 @@
  *  절차적 생성기 — 클럽 / 선수 / 일정
  * ================================================================ */
 
-import { LEAGUES, REAL_CLUBS, NAME_POOLS, POOL_BY_CODE, getLeague } from '../data/world.js';
+import { LEAGUES, REAL_CLUBS, NAME_POOLS, POOL_BY_CODE, getLeague, getSeasonMatchCount } from '../data/world.js';
 import { addDays, getDayOfWeek } from './calendar.js';
 import { getPrimaryCup, getDomesticCups, getContinentalCup, getContinentalForRank, CONTINENTAL_CUPS, A_MATCH_DATES, getInternationalMatchType } from '../data/cups.js';
 
@@ -226,37 +226,42 @@ export function generateSeasonFixtures(player, clubsInLeague, opponentsContinent
    */
   const weeks = [];
   const leagueOpponents = clubsInLeague.filter(c => c.id !== player.clubId);
-  const leagueName = getLeague(player.leagueId).name;
-  // 더블 라운드 로빈: 각 상대 vs 홈 1 + 원정 1 = 총 2*(N-1) 경기
-  // 라운드 1: H/A 무작위 배분 (절반 홈 / 절반 원정)
-  // 라운드 2: 라운드 1의 H/A 반전 → 각 상대와 정확히 홈/원정 1번씩
+  const myLeagueObj = getLeague(player.leagueId);
+  const leagueName = myLeagueObj.name;
+  const targetMatches = getSeasonMatchCount(myLeagueObj);
+  const N = leagueOpponents.length; // 상대 수
+  const fullRounds = N > 0 ? Math.floor(targetMatches / N) : 0;
+  const extraMatches = N > 0 ? (targetMatches - fullRounds * N) : 0;
   const allLeagueFixtures = [];
-  const homeInRound1 = {}; // opp.id → bool
 
-  const round1Order = [...leagueOpponents].sort(() => Math.random() - 0.5);
-  round1Order.forEach((opp, i) => {
-    // 라운드 1: 짝수 인덱스는 홈, 홀수는 원정 (50/50 균등)
-    const home = i % 2 === 0;
-    homeInRound1[opp.id] = home;
-    allLeagueFixtures.push({
-      type: 'league',
-      opp: opp.id, oppName: opp.name, oppStr: opp.strength,
-      home,
-      competition: leagueName,
-      oppLeagueId: opp.leagueId
+  // 라운드별 홈/원정 패턴: 짝수 라운드 짝수 인덱스 홈 / 홀수 라운드 짝수 인덱스 원정
+  for (let r = 0; r < fullRounds; r++) {
+    const order = [...leagueOpponents].sort(() => Math.random() - 0.5);
+    order.forEach((opp, i) => {
+      const home = ((i + r) % 2) === 0;
+      allLeagueFixtures.push({
+        type: 'league',
+        opp: opp.id, oppName: opp.name, oppStr: opp.strength,
+        home,
+        competition: leagueName,
+        oppLeagueId: opp.leagueId
+      });
     });
-  });
-
-  const round2Order = [...leagueOpponents].sort(() => Math.random() - 0.5);
-  round2Order.forEach(opp => {
-    allLeagueFixtures.push({
-      type: 'league',
-      opp: opp.id, oppName: opp.name, oppStr: opp.strength,
-      home: !homeInRound1[opp.id], // 라운드 1의 반대
-      competition: leagueName,
-      oppLeagueId: opp.leagueId
+  }
+  // 잔여 매치 (스플릿 라운드 / 추가 경기) — 무작위 상대와 단발
+  if (extraMatches > 0) {
+    const extraOrder = [...leagueOpponents].sort(() => Math.random() - 0.5).slice(0, extraMatches);
+    extraOrder.forEach((opp, i) => {
+      allLeagueFixtures.push({
+        type: 'league',
+        opp: opp.id, oppName: opp.name, oppStr: opp.strength,
+        home: i % 2 === 0,
+        competition: leagueName,
+        oppLeagueId: opp.leagueId,
+        round: '스플릿/추가'
+      });
     });
-  });
+  }
 
   // 자국 컵 — 첫 라운드만 (이후는 동적 추가)
   const myLeague = getLeague(player.leagueId);
