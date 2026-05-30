@@ -132,12 +132,6 @@ export const game = {
     const s = this.state;
     if (!s) return { error: 'no_state' };
 
-    // 직전 호출에서 오늘 이벤트를 반환했다면, 먼저 하루 전진 (반복 방지)
-    if (s._lastEventDate && sameDate(s._lastEventDate, s.calendar)) {
-      advanceOneDay(s);
-      s._lastEventDate = null;
-    }
-
     let daysAdvanced = 0;
 
     for (let safety = 0; safety < 365; safety++) {
@@ -149,8 +143,11 @@ export const game = {
       // 오늘 이벤트 수집
       const todayEvents = collectTodayEvents(s);
       if (todayEvents.length > 0) {
-        s._lastEventDate = { ...s.calendar };
-        return { events: todayEvents, daysAdvanced, currentDate: { ...s.calendar } };
+        // 이벤트가 발생한 날짜는 보존하되, 캘린더는 다음날로 미리 전진
+        // → 다음 호출 시 다시 이 날짜를 잡지 않고, refreshStatus의 findNextEvent도 정확히 다음 이벤트를 보여줌
+        const eventDate = { ...s.calendar };
+        advanceOneDay(s);
+        return { events: todayEvents, daysAdvanced, currentDate: eventDate };
       }
 
       // 1일 전진
