@@ -218,7 +218,7 @@ function computeMatchDate(seasonStartDate, week, matchType) {
   return addDays(weekStart, offset);
 }
 
-export function generateSeasonFixtures(player, clubsInLeague, opponentsContinental, seasonStartDate) {
+export function generateSeasonFixtures(player, clubsInLeague, opponentsContinental, seasonStartDate, worldClubs) {
   const seasonStart = seasonStartDate || { year: 2026, month: 8, day: 1 };
   /*
    *  returns array of weeks (1..50). 각 주에 매치 0~3개.
@@ -323,7 +323,7 @@ export function generateSeasonFixtures(player, clubsInLeague, opponentsContinent
         week: w
       });
       cupsThisWeek.forEach(cr => {
-        const cupOpp = pickCupOpponent(player.leagueId, cr.round);
+        const cupOpp = pickCupOpponent(player.leagueId, cr.round, worldClubs);
         wk.matches.push({
           type: 'cup',
           week: w,
@@ -369,11 +369,29 @@ export function generateSeasonFixtures(player, clubsInLeague, opponentsContinent
   return weeks;
 }
 
-// 컵 상대는 같은 국가의 다른 리그 클럽에서 랜덤 추출
-function pickCupOpponent(leagueId, round) {
+// 컵 상대는 같은 국가의 다른 리그 클럽에서 추출 (실제 클럽명 사용)
+function pickCupOpponent(leagueId, round, worldClubs) {
   const myLeague = getLeague(leagueId);
-  // 같은 국가의 1~3부 리그 클럽 합쳐서 랜덤 (단순화: 상대 강도 결정)
   const isLateRound = ['8강', '4강', '준결승', '결승'].includes(round);
+  // 같은 국가의 모든 리그 클럽 합치기
+  const sameCountryLeagues = LEAGUES.filter(l => l.code === myLeague.code);
+  const sameCountryClubs = [];
+  if (worldClubs) {
+    sameCountryLeagues.forEach(l => {
+      (worldClubs[l.id] || []).forEach(c => sameCountryClubs.push({ ...c, leagueId: l.id }));
+    });
+  }
+  // 강도 필터 (후기 라운드일수록 강팀)
+  let pool;
+  if (isLateRound) {
+    pool = sameCountryClubs.filter(c => c.strength >= myLeague.strength - 15);
+  } else {
+    pool = sameCountryClubs.filter(c => c.strength >= 35 && c.strength <= myLeague.strength + 5);
+  }
+  if (pool.length > 0) {
+    return pick(pool);
+  }
+  // 폴백: 가상 상대
   const oppStr = isLateRound ? clamp(myLeague.strength + rand(-10, 10), 40, 99) : clamp(myLeague.strength + rand(-25, 5), 30, 90);
   return {
     id: uid('cupopp'),
@@ -397,11 +415,11 @@ export function selectContinentalOpponents(club, allClubsByLeague, conf, cupId) 
   confLeagues.forEach(l => {
     const clubs = allClubsByLeague[l.id];
     if (!clubs) return;
-    // 컵 등급에 따라 다른 풀: tier1=상위 4팀, tier2=중상위 5~9, tier3=하위
+    // 컵 등급별 클럽 풀 (중복 없이)
     let pool;
-    if (cup.tier === 1) pool = clubs.slice(0, 4);
-    else if (cup.tier === 2) pool = clubs.slice(3, 8);
-    else pool = clubs.slice(6, 12);
+    if (cup.tier === 1) pool = clubs.slice(0, 4);        // UCL: 1~4위
+    else if (cup.tier === 2) pool = clubs.slice(4, 8);   // UEL: 5~8위
+    else pool = clubs.slice(8, 14);                       // UECL: 9~14위
     candidates.push(...pool);
   });
   // 셔플 + 클럽 자신 제외

@@ -82,9 +82,9 @@ export function renderStart() {
           ${POSITIONS.map(p => `<option value="${p.id}"${p.id === 'CAM' ? ' selected' : ''}>${p.name} (${p.short})</option>`).join('')}
         </select>
       </label>
-      <label>시작 OVR (16세 데뷔 능력치)
-        <input type="number" id="in-start-ovr" min="40" max="72" value="50">
-        <small class="hint" style="margin-top:2px; display:block;">40 = 평범한 유스 · 50 = 정상 · 60 = 좋은 유망주 · 65 = 엘리트 · 70+ = 야말급 슈퍼 유망주</small>
+      <label>시작 OVR (16세 데뷔 능력치, 최대 72)
+        <input type="number" id="in-start-ovr" min="40" max="72" value="50" step="1">
+        <small class="hint" style="margin-top:2px; display:block;">40 = 평범한 유스 · 50 = 정상 · 60 = 좋은 유망주 · 65 = 엘리트 · 72 = 야말급 (최대치)</small>
       </label>
       <label>재능 (직접 선택)
         <select id="in-talent">
@@ -1623,8 +1623,8 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
   };
 }
 
-/* 하이라이트 모달 — 선택지 + 결과 표시 */
-export function showHighlightModal(highlight, current, total, callback) {
+/* 하이라이트 모달 — 선택지 클릭 시 한 모달 안에서 결과까지 보여줌 */
+export function showHighlightModal(highlight, current, total, processChoice, callback) {
   const overlay = document.createElement('div');
   overlay.id = 'modal-overlay';
   overlay.innerHTML = `
@@ -1634,7 +1634,7 @@ export function showHighlightModal(highlight, current, total, callback) {
         <span class="text-muted">${highlight.minute}'</span>
       </div>
       <p style="font-size:1.05rem; margin:12px 0; line-height:1.5;">${escapeHtml(highlight.text)}</p>
-      <div style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
+      <div id="hl-choices" style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
         ${highlight.choices.map((c, i) => `
           <button class="decision-choice" data-idx="${i}" style="text-align:left; padding:10px 14px;">
             ${escapeHtml(c.label)}
@@ -1642,44 +1642,45 @@ export function showHighlightModal(highlight, current, total, callback) {
           </button>
         `).join('')}
       </div>
+      <div id="hl-result" style="display:none;"></div>
+      <div id="hl-actions" class="actions" style="display:none; margin-top:14px;">
+        <button class="primary" id="hl-next">계속 ▶</button>
+      </div>
     </div>
   `;
   document.body.appendChild(overlay);
+
   overlay.querySelectorAll('.decision-choice').forEach(btn => {
     btn.onclick = () => {
       const idx = parseInt(btn.dataset.idx);
-      document.body.removeChild(overlay);
-      callback(idx);
+      const outcome = processChoice(idx);
+      // 선택지 숨김, 결과 표시
+      $('hl-choices').style.display = 'none';
+      const cls = outcome.success ? 'text-good' : 'text-bad';
+      $('hl-result').style.display = 'block';
+      $('hl-result').innerHTML = `
+        <p style="font-size:1.05rem; margin:14px 0; line-height:1.5;" class="${cls}">${escapeHtml(outcome.narrative)}</p>
+        <div style="display:flex; gap:14px; justify-content:center; margin:10px 0; font-size:0.92rem;">
+          ${outcome.goal ? '<span class="text-good">⚽ 골!</span>' : ''}
+          ${outcome.assist ? '<span class="text-info">🅰 어시!</span>' : ''}
+          <span class="${outcome.rating > 0 ? 'text-good' : (outcome.rating < 0 ? 'text-bad' : 'text-muted')}">평점 ${outcome.rating > 0 ? '+' : ''}${outcome.rating}</span>
+          ${outcome.fan ? `<span class="${outcome.fan > 0 ? 'text-good' : 'text-bad'}">팬 ${outcome.fan > 0 ? '+' : ''}${outcome.fan}</span>` : ''}
+        </div>
+      `;
+      $('hl-actions').style.display = 'flex';
+      $('hl-next').onclick = () => {
+        document.body.removeChild(overlay);
+        callback(outcome);
+      };
     };
   });
 }
 
+// 백워드 호환용 (사용 X — 기존 코드용)
+export function showHighlightResult(outcome, callback) { callback && callback(); }
+
 function getStatLabel(stat) {
   return STAT_NAMES[stat] || stat;
-}
-
-/* 하이라이트 결과 짧게 표시 (잠깐 보여주기) */
-export function showHighlightResult(outcome, callback) {
-  const overlay = document.createElement('div');
-  overlay.id = 'modal-overlay';
-  const cls = outcome.success ? 'text-good' : 'text-bad';
-  overlay.innerHTML = `
-    <div class="modal-content" style="max-width:480px;">
-      <p style="font-size:1.1rem; margin:10px 0; line-height:1.5;" class="${cls}">${escapeHtml(outcome.narrative)}</p>
-      <div style="display:flex; gap:14px; justify-content:center; margin:14px 0; font-size:0.9rem;">
-        ${outcome.goal ? '<span class="text-good">⚽ 골!</span>' : ''}
-        ${outcome.assist ? '<span class="text-info">🅰 어시!</span>' : ''}
-        <span class="${outcome.rating > 0 ? 'text-good' : 'text-bad'}">평점 ${outcome.rating > 0 ? '+' : ''}${outcome.rating}</span>
-        ${outcome.fan ? `<span class="${outcome.fan > 0 ? 'text-good' : 'text-bad'}">팬 ${outcome.fan > 0 ? '+' : ''}${outcome.fan}</span>` : ''}
-      </div>
-      <div class="actions"><button class="primary" id="hl-next">계속 ▶</button></div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-  document.getElementById('hl-next').onclick = () => {
-    document.body.removeChild(overlay);
-    callback();
-  };
 }
 
 /* 경기 후 종합 화면 */
@@ -1757,7 +1758,10 @@ VIEWS.transfers = function renderTransfersV2() {
           <strong>${escapeHtml(pending.offer.clubName)}</strong> (${escapeHtml(pending.offer.leagueName)})
         </p>
         <p>합류 예정일: <strong class="text-warn">${jd.year}년 ${jd.month}월 ${jd.day}일</strong></p>
-        <p class="hint">합류일까지 현 소속팀에서 활약. 새 오퍼는 받지 않음.</p>
+        <p class="hint">합류일까지 현 소속팀에서 활약. 새 오퍼는 받지 않음 (이미 합의됨).</p>
+        <div class="actions">
+          <button class="danger" id="cancel-pending">계약 파기 (사이닝 보너스 위약금 -50%)</button>
+        </div>
       </div>
     `;
   }
@@ -1900,6 +1904,15 @@ VIEWS.transfers = function renderTransfersV2() {
   if (rejectAll) rejectAll.onclick = () => {
     s.offers = [];
     renderView('hub');
+  };
+  const cancelPending = document.getElementById('cancel-pending');
+  if (cancelPending) cancelPending.onclick = () => {
+    if (!confirm('정말 사전 계약을 파기하시겠습니까? 사이닝 보너스 절반을 위약금으로 잃습니다.')) return;
+    const offer = s.pendingTransfer.offer;
+    s.player.money -= Math.round((offer.signOn || 0) * 0.5);
+    s.pendingTransfer = null;
+    game.log_(`⚠️ ${offer.clubName} 사전 계약 파기 — 위약금 ${Math.round((offer.signOn || 0) * 0.5)}만 €`, 'bad');
+    renderView('transfers');
   };
 };
 

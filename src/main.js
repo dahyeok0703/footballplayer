@@ -124,10 +124,15 @@ async function processFixture(fixture) {
 
   for (let i = 0; i < highlights.length; i++) {
     const hl = highlights[i];
-    const choiceIdx = await new Promise(res => showHighlightModal(hl, i + 1, highlights.length, res));
-    const outcome = evaluateChoice(s.player, hl, choiceIdx, tactic, role, matchState);
-    applyHighlightOutcome(matchState, outcome);
-    await new Promise(res => showHighlightResult(outcome, res));
+    // 한 모달 안에서 선택 → 결과 → "계속" 흐름
+    await new Promise(res => showHighlightModal(hl, i + 1, highlights.length,
+      (choiceIdx) => {
+        const outcome = evaluateChoice(s.player, hl, choiceIdx, tactic, role, matchState);
+        applyHighlightOutcome(matchState, outcome);
+        return outcome;
+      },
+      res
+    ));
     if (matchState.injury) break; // 부상이면 조기 종료
   }
 
@@ -390,6 +395,11 @@ async function processSeasonEnd() {
 
 function processOfferArrival(ev) {
   const s = game.state;
+  // 이미 사전 계약 진행 중이면 새 오퍼 차단
+  if (s.pendingTransfer) {
+    s.scheduledEvents = s.scheduledEvents.filter(e => e !== ev.scheduledEvent);
+    return;
+  }
   const offer = generateOneOffer(s);
   if (offer) {
     s.offers = s.offers || [];

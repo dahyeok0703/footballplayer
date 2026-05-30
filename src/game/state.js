@@ -141,7 +141,7 @@ export const game = {
     const estimatedRank = Math.max(1, Math.round((100 - startClub.strength) / 4));
     const startCupId = getContinentalForRank(startLeagueId, estimatedRank);
     const continentalOpps = startCupId ? selectContinentalOpponents(startClub, world.clubs, getLeague(startLeagueId).conf, startCupId) : null;
-    const fixtures = generateSeasonFixtures(player, clubs, continentalOpps, seasonStartDate);
+    const fixtures = generateSeasonFixtures(player, clubs, continentalOpps, seasonStartDate, world.clubs);
 
     // 첫 시즌 상태
     const season = makeSeasonState(player, clubs, fixtures);
@@ -403,7 +403,7 @@ export const game = {
     // 작년 리그 순위 기반으로 대륙간 컵 결정
     const newCupId = getContinentalForRank(player.leagueId, myRank);
     const continentalOpps = newCupId ? selectContinentalOpponents(myClub, s.world.clubs, newLeague.conf, newCupId) : null;
-    const fixtures = generateSeasonFixtures(player, newClubs, continentalOpps, s.calendar);
+    const fixtures = generateSeasonFixtures(player, newClubs, continentalOpps, s.calendar, s.world.clubs);
     s.season = makeSeasonState(player, newClubs, fixtures);
     // 새 시즌용 이벤트들 (이미 잡혀있는 미래 이적시장 이벤트는 유지 + 추가)
     const futureScheduled = (s.scheduledEvents || []).filter(e => compareDate(e.date, s.calendar) >= 0);
@@ -546,7 +546,7 @@ export const game = {
     const newCupId = getContinentalForRank(offer.leagueId, estRank);
     const continentalOpps = newCupId ? selectContinentalOpponents(newClub, s.world.clubs, newLeague.conf, newCupId) : null;
     const seasonStart = s.calendar || { year: s.year, month: 8, day: 1 };
-    const fixtures = generateSeasonFixtures(s.player, newClubs, continentalOpps, seasonStart);
+    const fixtures = generateSeasonFixtures(s.player, newClubs, continentalOpps, seasonStart, s.world.clubs);
     s.season = makeSeasonState(s.player, newClubs, fixtures);
     return true;
   },
@@ -614,17 +614,27 @@ function computeWeekFromCalendar(s) {
 }
 
 /* ---------- 국가대표 상대 국가 랜덤 추출 ---------- */
+const NATION_CODE_TO_NAME = {
+  KOR:'대한민국',JPN:'일본',CHN:'중국',PRK:'북한',SAU:'사우디아라비아',UAE:'UAE',QAT:'카타르',IRN:'이란',IRQ:'이라크',JOR:'요르단',UZB:'우즈베키스탄',AUS:'호주',
+  ENG:'잉글랜드',SCO:'스코틀랜드',WAL:'웨일스',IRL:'아일랜드',ESP:'스페인',GER:'독일',ITA:'이탈리아',FRA:'프랑스',POR:'포르투갈',NED:'네덜란드',BEL:'벨기에',TUR:'튀르키예',CRO:'크로아티아',POL:'폴란드',DEN:'덴마크',SWE:'스웨덴',NOR:'노르웨이',SUI:'스위스',AUT:'오스트리아',
+  BRA:'브라질',ARG:'아르헨티나',URU:'우루과이',COL:'콜롬비아',CHI:'칠레',PER:'페루',ECU:'에콰도르',PAR:'파라과이',
+  USA:'미국',MEX:'멕시코',CAN:'캐나다',CRC:'코스타리카',HON:'온두라스',PAN:'파나마',JAM:'자메이카',
+  NGA:'나이지리아',EGY:'이집트',MAR:'모로코',SEN:'세네갈',CIV:'코트디부아르',CMR:'카메룬',ALG:'알제리',TUN:'튀니지',GHA:'가나',MLI:'말리',
+  NZL:'뉴질랜드',FIJ:'피지'
+};
 function pickOpponentNation(myNation, conf) {
+  // myNation은 코드 (예: 'KOR') — pool도 코드로 비교
   const sameConfPool = {
-    UEFA: ['독일', '프랑스', '스페인', '이탈리아', '잉글랜드', '포르투갈', '네덜란드', '벨기에', '크로아티아', '폴란드', '튀르키예', '덴마크', '스웨덴', '스위스'],
-    CONMEBOL: ['브라질', '아르헨티나', '우루과이', '콜롬비아', '칠레', '에콰도르', '페루'],
-    AFC: ['일본', '한국', '호주', '이란', '사우디아라비아', '카타르', 'UAE', '우즈베키스탄', '이라크'],
-    CAF: ['모로코', '세네갈', '나이지리아', '이집트', '알제리', '튀니지', '가나', '카메룬'],
-    CONCACAF: ['미국', '멕시코', '캐나다', '코스타리카', '온두라스', '파나마', '자메이카'],
-    OFC: ['뉴질랜드', '피지', '솔로몬 제도']
+    UEFA: ['GER','FRA','ESP','ITA','ENG','POR','NED','BEL','CRO','POL','TUR','DEN','SWE','SUI','SCO','AUT','NOR'],
+    CONMEBOL: ['BRA','ARG','URU','COL','CHI','ECU','PER','PAR'],
+    AFC: ['JPN','KOR','AUS','IRN','SAU','QAT','UAE','UZB','IRQ','JOR'],
+    CAF: ['MAR','SEN','NGA','EGY','ALG','TUN','GHA','CMR','CIV','MLI'],
+    CONCACAF: ['USA','MEX','CAN','CRC','HON','PAN','JAM'],
+    OFC: ['NZL','FIJ']
   };
-  const pool = (sameConfPool[conf] || sameConfPool.UEFA).filter(n => n !== myNation);
-  return pool[Math.floor(Math.random() * pool.length)];
+  const pool = (sameConfPool[conf] || sameConfPool.UEFA).filter(c => c !== myNation);
+  const code = pool[Math.floor(Math.random() * pool.length)];
+  return NATION_CODE_TO_NAME[code] || code;
 }
 
 /* ---------- 이적시장 오퍼 도착 이벤트 스케줄링 ----------
@@ -778,13 +788,17 @@ function collectTodayEvents(s) {
   return events;
 }
 
-/* ---------- 본인 리그의 다른 클럽들 한 라운드 시뮬 ---------- */
+/* ---------- 본인 리그의 다른 클럽들 한 라운드 시뮬 ----------
+ *  본인이 리그 경기 있는 주에만 발동 → 다른 클럽들도 같은 매치 수 누적
+ */
 function simulateOtherClubsLeagueRound(state) {
   const clubs = state.world.clubs[state.player.leagueId];
   if (!clubs) return;
-  // 이번 주 본인의 리그 경기 상대는 제외 (실제 매치에서 따로 처리됨)
   const week = state.season.fixtures.find(f => f.week === state.week);
-  const myOppId = week && week.matches ? week.matches.find(m => m.type === 'league')?.opp : null;
+  const myLeagueMatch = week && week.matches ? week.matches.find(m => m.type === 'league') : null;
+  // 본인 리그 경기 없는 주에는 다른 클럽도 매치 없음 (실제 일정과 정렬)
+  if (!myLeagueMatch) return;
+  const myOppId = myLeagueMatch.opp;
   const others = clubs.filter(c => c.id !== state.player.clubId && c.id !== myOppId);
   // 절반 쌍으로 경기 (라운드 로빈 진행)
   const shuffled = [...others].sort(() => Math.random() - 0.5);
