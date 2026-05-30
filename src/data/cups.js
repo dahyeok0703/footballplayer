@@ -250,18 +250,103 @@ export function getContinentalForRank(leagueId, rank) {
 }
 
 /* ================================================================
- *  국가대표 경기 타입 (A매치 데이트별)
- *  - 매월 자동 발생 후보
- *  - WC qualifier / 친선 / 본선
+ *  FIFA International Match Calendar (실제 일정 기반)
+ *  - 매년 5개 A매치 윈도우 (3/6/9/10/11월)
+ *  - 각 윈도우 안에 2경기 (격일~3일 간격)
+ *  - 시기/연맹에 따라 WC 예선/유로 예선/아시안컵 예선/AFCON 예선/친선
  * ================================================================ */
 export const A_MATCH_DATES = [
-  // FIFA International Match Calendar (간략화)
-  // 월, 일, 경기수
-  { month: 3,  startDay: 17, days: 11, label: '3월 A매치 위크' },
-  { month: 6,  startDay: 1,  days: 14, label: '6월 A매치 위크' },
-  { month: 9,  startDay: 1,  days: 14, label: '9월 A매치 위크' },
-  { month: 10, startDay: 6,  days: 11, label: '10월 A매치 위크' },
-  { month: 11, startDay: 10, days: 11, label: '11월 A매치 위크' }
+  { month: 3,  startDay: 24, days: 8,  label: '3월 A매치 위크 (24~31일)' },
+  { month: 6,  startDay: 2,  days: 10, label: '6월 A매치 위크 (시즌 종료 직후)' },
+  { month: 9,  startDay: 1,  days: 9,  label: '9월 A매치 위크' },
+  { month: 10, startDay: 7,  days: 9,  label: '10월 A매치 위크' },
+  { month: 11, startDay: 11, days: 9,  label: '11월 A매치 위크' }
+];
+
+/* ---------- 메이저 토너먼트 실제 일정 (2025~2034) ----------
+ *  - 시작일에 차출 모달 발생
+ *  - 토너먼트 기간 동안 클럽 일정은 자동 정지/완화
+ *  - confs: 출전 가능 연맹 / conf: 단일 연맹
+ *  - ageMax: U-23 등 나이 제한 (와일드카드 별도)
+ */
+export const MAJOR_TOURNAMENTS = [
+  // ===== FIFA 월드컵 =====
+  { id: 'wc_2026',   name: 'FIFA 월드컵 2026',     year: 2026, month: 6,  day: 11, endMonth: 7, endDay: 19,
+    type: 'world_cup',     host: '미국/캐나다/멕시코',          confs: 'ALL', prestige: 200 },
+  { id: 'wc_2030',   name: 'FIFA 월드컵 2030',     year: 2030, month: 6,  day: 8,  endMonth: 7, endDay: 21,
+    type: 'world_cup',     host: '스페인/포르투갈/모로코',      confs: 'ALL', prestige: 200 },
+  { id: 'wc_2034',   name: 'FIFA 월드컵 2034',     year: 2034, month: 6,  day: 10, endMonth: 7, endDay: 21,
+    type: 'world_cup',     host: '사우디아라비아',              confs: 'ALL', prestige: 200 },
+
+  // ===== UEFA 유로 =====
+  { id: 'euro_2028', name: 'UEFA 유로 2028',       year: 2028, month: 6,  day: 9,  endMonth: 7, endDay: 9,
+    type: 'euro',          host: '잉글랜드/스코틀랜드/웨일스/아일랜드', conf: 'UEFA', prestige: 150 },
+  { id: 'euro_2032', name: 'UEFA 유로 2032',       year: 2032, month: 6,  day: 11, endMonth: 7, endDay: 11,
+    type: 'euro',          host: '이탈리아/튀르키예',           conf: 'UEFA', prestige: 150 },
+
+  // ===== 코파 아메리카 =====
+  { id: 'copa_2028', name: '코파 아메리카 2028',    year: 2028, month: 6,  day: 1,  endMonth: 6, endDay: 26,
+    type: 'copa_america',  host: '미국',                        conf: 'CONMEBOL', prestige: 130 },
+  { id: 'copa_2032', name: '코파 아메리카 2032',    year: 2032, month: 6,  day: 5,  endMonth: 6, endDay: 30,
+    type: 'copa_america',  host: 'TBD',                         conf: 'CONMEBOL', prestige: 130 },
+
+  // ===== AFC 아시안컵 =====
+  { id: 'asian_2027', name: 'AFC 아시안컵 2027',    year: 2027, month: 1,  day: 7,  endMonth: 2, endDay: 5,
+    type: 'asian_cup',     host: '사우디아라비아',              conf: 'AFC', prestige: 100 },
+  { id: 'asian_2031', name: 'AFC 아시안컵 2031',    year: 2031, month: 1,  day: 9,  endMonth: 2, endDay: 7,
+    type: 'asian_cup',     host: 'TBD',                         conf: 'AFC', prestige: 100 },
+
+  // ===== CAF AFCON =====
+  { id: 'afcon_2025', name: 'CAF AFCON 2025',      year: 2025, month: 12, day: 21, endMonth: 1, endDay: 18,
+    type: 'afcon',         host: '모로코',                      conf: 'CAF', prestige: 90 },
+  { id: 'afcon_2027', name: 'CAF AFCON 2027',      year: 2027, month: 6,  day: 21, endMonth: 7, endDay: 18,
+    type: 'afcon',         host: '케냐/우간다/탄자니아',         conf: 'CAF', prestige: 90 },
+  { id: 'afcon_2029', name: 'CAF AFCON 2029',      year: 2029, month: 1,  day: 5,  endMonth: 2, endDay: 1,
+    type: 'afcon',         host: 'TBD',                         conf: 'CAF', prestige: 90 },
+
+  // ===== CONCACAF 골드컵 / 네이션스리그 =====
+  { id: 'gold_2025', name: 'CONCACAF 골드컵 2025', year: 2025, month: 6,  day: 14, endMonth: 7, endDay: 6,
+    type: 'gold_cup',      host: '미국/캐나다',                 conf: 'CONCACAF', prestige: 80 },
+  { id: 'gold_2027', name: 'CONCACAF 골드컵 2027', year: 2027, month: 6,  day: 12, endMonth: 7, endDay: 4,
+    type: 'gold_cup',      host: 'TBD',                         conf: 'CONCACAF', prestige: 80 },
+  { id: 'gold_2029', name: 'CONCACAF 골드컵 2029', year: 2029, month: 6,  day: 16, endMonth: 7, endDay: 8,
+    type: 'gold_cup',      host: 'TBD',                         conf: 'CONCACAF', prestige: 80 },
+
+  // ===== 올림픽 (U-23 + 와일드카드 3) =====
+  { id: 'olympics_2028', name: '올림픽 LA 2028',   year: 2028, month: 7,  day: 21, endMonth: 8, endDay: 6,
+    type: 'olympics',      host: 'LA',                          confs: 'ALL', prestige: 110, ageMax: 23, overage: 3 },
+  { id: 'olympics_2032', name: '올림픽 브리즈번 2032', year: 2032, month: 7, day: 23, endMonth: 8, endDay: 8,
+    type: 'olympics',      host: '브리즈번',                    confs: 'ALL', prestige: 110, ageMax: 23, overage: 3 },
+
+  // ===== 아시안게임 (U-23) =====
+  { id: 'asian_games_2026', name: '아시안게임 2026 아이치', year: 2026, month: 9, day: 19, endMonth: 10, endDay: 4,
+    type: 'asian_games',   host: '아이치',                      conf: 'AFC', prestige: 70, ageMax: 23, overage: 3 },
+  { id: 'asian_games_2030', name: '아시안게임 2030 도하', year: 2030, month: 12, day: 1, endMonth: 12, endDay: 16,
+    type: 'asian_games',   host: '도하',                        conf: 'AFC', prestige: 70, ageMax: 23, overage: 3 },
+
+  // ===== 피날리시마 / 컨페드컵 =====
+  { id: 'finalissima_2026', name: '피날리시마 2026', year: 2026, month: 3, day: 28, endMonth: 3, endDay: 28,
+    type: 'finalissima',   host: 'TBD',                         confs: ['UEFA','CONMEBOL'], prestige: 55 },
+  { id: 'confed_2029',     name: 'FIFA 컨페더레이션스컵 2029', year: 2029, month: 6, day: 14, endMonth: 6, endDay: 28,
+    type: 'confederations',host: 'TBD',                         confs: 'ALL', prestige: 75 },
+
+  // ===== UEFA 네이션스리그 결승전 =====
+  { id: 'nl_final_2027', name: 'UEFA 네이션스리그 결승 2027', year: 2027, month: 6, day: 4, endMonth: 6, endDay: 8,
+    type: 'nations_league_final', conf: 'UEFA', prestige: 65 },
+  { id: 'nl_final_2029', name: 'UEFA 네이션스리그 결승 2029', year: 2029, month: 6, day: 6, endMonth: 6, endDay: 10,
+    type: 'nations_league_final', conf: 'UEFA', prestige: 65 },
+
+  // ===== EAFF E-1 =====
+  { id: 'eaff_2026', name: 'EAFF E-1 챔피언십 2026', year: 2026, month: 7, day: 10, endMonth: 7, endDay: 17,
+    type: 'eaff',          conf: 'AFC', eligibleNations: ['KOR','JPN','CHN','PRK'], prestige: 30 },
+  { id: 'eaff_2028', name: 'EAFF E-1 챔피언십 2028', year: 2028, month: 7, day: 8, endMonth: 7, endDay: 15,
+    type: 'eaff',          conf: 'AFC', eligibleNations: ['KOR','JPN','CHN','PRK'], prestige: 30 },
+
+  // ===== FIFA 아랍컵 =====
+  { id: 'arab_2025', name: 'FIFA 아랍컵 2025', year: 2025, month: 12, day: 1, endMonth: 12, endDay: 18,
+    type: 'arab_cup', conf: 'AFC', eligibleNations: ['SAU','UAE','QAT','IRQ','JOR','LBN','SYR','PSE','YEM','KWT','BHR','OMN','EGY','MAR','TUN','ALG','LBY','SUD'], prestige: 50 },
+  { id: 'arab_2029', name: 'FIFA 아랍컵 2029', year: 2029, month: 11, day: 28, endMonth: 12, endDay: 15,
+    type: 'arab_cup', conf: 'AFC', eligibleNations: ['SAU','UAE','QAT','IRQ','JOR','LBN','SYR','PSE','YEM','KWT','BHR','OMN','EGY','MAR','TUN','ALG','LBY','SUD'], prestige: 50 }
 ];
 
 /* 국가대표 경기 종류 결정 (시기/연도 기반)

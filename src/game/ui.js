@@ -11,6 +11,10 @@ import { setApiKey, getApiKey, hasApiKey, clearApiKey, setModel, getModel } from
 import { dateLabel, shortDate, daysBetween, sameDate, compareDate } from '../engine/calendar.js';
 import { getDecisionTemplate } from '../engine/decisions.js';
 import { generateLeagueClubs } from '../engine/generator.js';
+import { MAJOR_TOURNAMENTS } from '../data/cups.js';
+
+// 글로벌 캐시 — renderTournamentSchedule에서 사용
+if (typeof window !== 'undefined') window.MAJOR_TOURNAMENTS_CACHE = MAJOR_TOURNAMENTS;
 
 let currentView = 'hub';
 let trainAlloc = {};
@@ -625,11 +629,38 @@ function renderNational() {
           <span>vs ${m.opp} · 평점 ${m.rating}</span>
           <span class="res ${m.result === 'W' ? 'win' : (m.result === 'L' ? 'loss' : 'draw')}">${m.myGoals}-${m.oppGoals}</span>
         </div>`).join('')}
-      <h4 style="margin-top:14px;">주요 토너먼트</h4>
-      <p>월드컵 (4년 주기): ${[2026, 2030, 2034].join(', ')}</p>
-      <p>대륙선수권 (2~4년 주기)</p>
+      <h4 style="margin-top:14px;">📅 주요 토너먼트 일정 (실제 데이터)</h4>
+      ${renderTournamentSchedule(p.nationality, s.year)}
     </div>
   `;
+}
+
+function renderTournamentSchedule(nationality, currentYear) {
+  // confederation/eligibility 기준 필터
+  const conf = {
+    KOR:'AFC',JPN:'AFC',CHN:'AFC',SAU:'AFC',UAE:'AFC',QAT:'AFC',IRN:'AFC',IRQ:'AFC',JOR:'AFC',UZB:'AFC',THA:'AFC',VIE:'AFC',IDN:'AFC',MAS:'AFC',IND:'AFC',AUS:'AFC',
+    ENG:'UEFA',SCO:'UEFA',WAL:'UEFA',IRL:'UEFA',NIR:'UEFA',ESP:'UEFA',GER:'UEFA',ITA:'UEFA',FRA:'UEFA',POR:'UEFA',NED:'UEFA',BEL:'UEFA',TUR:'UEFA',CRO:'UEFA',
+    BRA:'CONMEBOL',ARG:'CONMEBOL',URU:'CONMEBOL',COL:'CONMEBOL',CHI:'CONMEBOL',PER:'CONMEBOL',ECU:'CONMEBOL',
+    USA:'CONCACAF',MEX:'CONCACAF',CAN:'CONCACAF',
+    NGA:'CAF',EGY:'CAF',MAR:'CAF',SEN:'CAF',CIV:'CAF',CMR:'CAF',ALG:'CAF',TUN:'CAF',GHA:'CAF',
+    NZL:'OFC'
+  }[nationality] || 'UEFA';
+  // 사용자 가능 토너먼트만 + 향후 5년만
+  const filtered = (window.MAJOR_TOURNAMENTS_CACHE || []).filter(t => {
+    if (t.year < currentYear) return false;
+    if (t.year > currentYear + 5) return false;
+    if (t.conf && t.conf !== conf) return false;
+    if (t.confs && t.confs !== 'ALL' && !t.confs.includes(conf)) return false;
+    if (t.eligibleNations && !t.eligibleNations.includes(nationality)) return false;
+    return true;
+  }).sort((a,b) => a.year*12+a.month - (b.year*12+b.month));
+  if (filtered.length === 0) return '<p class="hint">참가 가능한 토너먼트 없음</p>';
+  return filtered.map(t => `
+    <p style="font-size:0.86rem;">
+      <strong>${escapeHtml(t.name)}</strong> · ${t.year}/${t.month}/${t.day}~${t.endMonth}/${t.endDay}
+      <small class="text-muted">${t.host ? '· ' + escapeHtml(t.host) : ''} ${t.ageMax ? '· U-' + t.ageMax : ''}</small>
+    </p>
+  `).join('');
 }
 
 /* ---------- 이적 ---------- */

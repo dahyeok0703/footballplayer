@@ -10,7 +10,7 @@ import { nextDay, addDays, compareDate, sameDate, dateLabel, daysBetween, isSeas
 import { scheduleSeasonDecisions, getDecisionTemplate, applyDecisionEffect } from '../engine/decisions.js';
 import { generateDiverseOffers, makeLoanRenewalOffer } from '../engine/offers.js';
 import { NATIONAL_TOURNAMENTS, NATION_TO_CONF } from '../data/tournaments.js';
-import { getContinentalForRank, getContinentalCup, A_MATCH_DATES, getInternationalMatchType, getPrimaryCup } from '../data/cups.js';
+import { getContinentalForRank, getContinentalCup, A_MATCH_DATES, MAJOR_TOURNAMENTS, getInternationalMatchType, getPrimaryCup } from '../data/cups.js';
 import { runOffseasonSim, ensureTopRosters } from '../engine/world_sim.js';
 import { checkNewlyEarnedTraits, getTrait } from '../data/traits.js';
 
@@ -726,36 +726,26 @@ function collectTodayEvents(s) {
     }
   }
 
-  // 3. 국제대회 (월드컵/올림픽/아시안컵 등 — 매월 1일에 발생 가능성 체크)
-  if (today.day === 1) {
-    const ovr = calcOVR(s.player);
-    if (ovr >= 70 && !s.player.nationalRetired) {
-      Object.entries(NATIONAL_TOURNAMENTS).forEach(([id, t]) => {
-        if (!t.months || !t.months.includes(today.month)) return;
-        const conf = NATION_TO_CONF[s.player.nationality];
-        if (t.conf && t.conf !== conf) return;
-        if (t.confs && !t.confs.includes(conf)) return;
-        if (t.eligibleNations && Array.isArray(t.eligibleNations) && !t.eligibleNations.includes(s.player.nationality)) return;
+  // 3. 메이저 토너먼트 — 실제 시작일에 차출 발생 (FIFA Match Calendar 기반)
+  if (ovr >= 68 && !s.player.nationalRetired) {
+    const conf = NATION_TO_CONF[s.player.nationality];
+    for (const t of MAJOR_TOURNAMENTS) {
+      // 시작일 정확히 일치
+      if (t.year !== today.year || t.month !== today.month || t.day !== today.day) continue;
+      // 연맹 / 국가 필터
+      if (t.conf && t.conf !== conf) continue;
+      if (t.confs && t.confs !== 'ALL' && !t.confs.includes(conf)) continue;
+      if (t.eligibleNations && !t.eligibleNations.includes(s.player.nationality)) continue;
+      // 나이 제한 (U-23 + 와일드카드)
+      if (t.ageMax && s.player.age > t.ageMax) {
+        if (!t.overage || ovr < 82) continue; // 와일드카드는 명성 높을 때
+      }
+      // 중복 차출 방지
+      s.player.tournamentsAttended = s.player.tournamentsAttended || [];
+      if (s.player.tournamentsAttended.includes(t.id)) continue;
+      s.player.tournamentsAttended.push(t.id);
 
-        // 사이클 체크
-        if (t.nextYear) {
-          const diff = (today.year - t.nextYear) % t.cycle;
-          if (diff !== 0) return;
-        }
-
-        // U-23 나이 체크
-        if (t.ageMax && s.player.age > t.ageMax) {
-          // 와일드카드 가능성 (명성 높을 때)
-          if (!t.overage || ovr < 80) return;
-        }
-
-        // 이미 이번 시즌 이 대회 차출됐는지 체크
-        s.player.tournamentsThisSeason = s.player.tournamentsThisSeason || [];
-        if (s.player.tournamentsThisSeason.includes(id + '_' + today.year)) return;
-        s.player.tournamentsThisSeason.push(id + '_' + today.year);
-
-        events.push({ type: 'tournament_callup', tournament: { id, ...t }, date: { ...today } });
-      });
+      events.push({ type: 'tournament_callup', tournament: t, date: { ...today } });
     }
   }
 

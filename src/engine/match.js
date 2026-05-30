@@ -224,14 +224,37 @@ function simExtraGoals(att, def) {
   return g;
 }
 
-/* ---------- 출전 여부 결정 ---------- */
+/* ---------- 출전 여부 결정 ----------
+ *  - OVR 80+: 어느 팀에서든 무조건 주전
+ *  - OVR 70+: 거의 항상 주전, 빅클럽 격차 15+ 시 벤치
+ *  - OVR 60+: 빅클럽 격차 20+ 시 명단 제외, 10+ 시 벤치
+ *  - 부상: 결장. 피로 90+: 가끔 벤치 (감독 휴식)
+ */
 export function determineStartingStatus(player, fixture) {
   const ovr = calcOVR(player);
-  const clubStr = player.clubStrength || ovr;
-  // OVR이 클럽 평균 이상이면 주전, 이하면 후보, 너무 낮으면 결장
-  const diff = ovr - clubStr;
+  const clubStr = player.clubStrength || 70;
+  const fatigue = player.fatigue || 0;
+
   if (player.injury && player.injury > 0) return 'absent_injury';
-  if (diff >= -5) return 'starter';
-  if (diff >= -12) return 'bench';
-  return 'absent_squad';
+
+  // 극도 피로 시 휴식 가능성 (90+ → 40% 확률 벤치, 80+ → 15%)
+  if (fatigue >= 90 && Math.random() < 0.4) return 'bench';
+  if (fatigue >= 80 && Math.random() < 0.15) return 'bench';
+
+  // OVR 80+: 무조건 주전 (월클은 어느 팀에서든 빠질 수 없음)
+  if (ovr >= 80) return 'starter';
+  // OVR 70~79: 거의 주전 (격차 15+ 시 벤치)
+  if (ovr >= 70) {
+    return clubStr - ovr > 15 ? 'bench' : 'starter';
+  }
+  // OVR 60~69: 격차 따라 차등
+  if (ovr >= 60) {
+    if (clubStr - ovr > 20) return 'absent_squad';
+    if (clubStr - ovr > 10) return 'bench';
+    return 'starter';
+  }
+  // OVR < 60
+  if (clubStr - ovr > 15) return 'absent_squad';
+  if (clubStr - ovr > 5) return 'bench';
+  return 'starter';
 }
