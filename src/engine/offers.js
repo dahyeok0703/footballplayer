@@ -225,7 +225,8 @@ function makeOffer(state, ovr, avgRating, kind) {
   else if (kind === 'money_league') signOn = Math.round(wage * 20);
   else if (player.age >= 28) signOn = Math.round(wage * 3);
   let years;
-  if (roleInfo.shortContract) years = rand(1, 2);
+  if (isLoan) years = 1; // 임대는 무조건 1년
+  else if (roleInfo.shortContract) years = rand(1, 2);
   else if (role === 'prospect') years = rand(4, 6);
   else years = rand(2, 5);
 
@@ -409,6 +410,62 @@ function generatePressCoverage(player, targetClub, kind, role) {
     `🟢 영입 가능성 70% — 조건 협의 단계.`,
     `📋 에이전트 측 \'좋은 분위기\' 언급.`
   ]);
+}
+
+/* ---------- 임대 갱신 오퍼 생성 (작년 임대 활약 좋았을 때) ---------- */
+export function makeLoanRenewalOffer(state, clubId, leagueId, clubName) {
+  const league = LEAGUES.find(l => l.id === leagueId);
+  if (!league) return null;
+  const club = (state.world.clubs[leagueId] || []).find(c => c.id === clubId);
+  if (!club) return null;
+  const ovr = calcOVR(state.player);
+  return {
+    id: `renewal_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+    clubId: club.id,
+    clubName: club.name,
+    leagueId,
+    leagueName: league.name,
+    leagueStrength: league.strength,
+    clubStrength: club.strength,
+    fee: Math.round(ovr * 25),
+    wage: Math.round((league.strength + ovr) * 0.36),
+    signOn: Math.round(ovr * 5),
+    bonusGoals: Math.round(ovr * 0.1),
+    bonusAppearances: Math.round(ovr * 0.05),
+    bonusTrophy: Math.round(ovr * 1.5),
+    buyoutClause: null,
+    years: 1,
+    role: 'loan',
+    roleLabel: '📋 임대 갱신',
+    roleDescription: '1년 임대 갱신 — 작년 활약을 본 클럽 측의 재요청',
+    playingTimeGuarantee: 2400,
+    threeYearPlan: '한 시즌 더 임대 후 완전 이적 옵션 검토',
+    captainPath: null,
+    uclChance: 0,
+    expectedFinish: 5,
+    isLoan: true,
+    freeTransfer: false,
+    isRival: false,
+    interestLevel: 88,
+    pros: [
+      '🤝 작년 임대 활약이 인상적이라 재요청',
+      '⚡ 익숙한 환경 — 즉시 적응',
+      '🎯 출전 시간 더 많이 보장 (2400분+)'
+    ],
+    risks: [
+      '📋 1년 후 다시 모 클럽 복귀 의무',
+      '⚠ 같은 환경에서 변화가 없을 수도'
+    ],
+    currentClubFanReaction: '🤝 \"작년에 잘했으니 좀 더 보내자\" 분위기.',
+    newClubFanReaction: `🎉 ${club.name} 팬들 "한 시즌 더!" 환영.`,
+    pressCoverage: `📰 ${club.name}, 임대 갱신 추진 — 작년 활약 인정`,
+    joinDate: state.calendar ? { year: state.calendar.year, month: 8, day: 1 } : { year: 2026, month: 8, day: 1 },
+    arrivedDate: state.calendar ? { ...state.calendar } : null,
+    kind: 'loan_renewal',
+    reason: '작년 임대 시즌의 좋은 활약 — 한 시즌 더 함께하고 싶음',
+    negotiationRound: 0,
+    withdrawn: false
+  };
 }
 
 function pickReason(kind, role, player) {

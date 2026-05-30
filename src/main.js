@@ -377,6 +377,13 @@ async function processSeasonEnd() {
     if (seasonResult.report.newTraits && seasonResult.report.newTraits.length > 0) {
       seasonResult.report.newTraits.forEach(t => game.log_(`✨ 신규 특성 획득: ${t.name} — ${t.desc}`, 'event'));
     }
+    if (seasonResult.report.loanReturnInfo) {
+      const li = seasonResult.report.loanReturnInfo;
+      game.log_(`📋 임대 만료 — ${li.loanedToClubName}에서 ${li.parentClubName}으로 복귀`, 'event');
+      if (li.renewalOffered) {
+        game.log_(`🤝 ${li.loanedToClubName}에서 임대 갱신 제안 도착! (이적 메뉴 확인)`, 'event');
+      }
+    }
     showSeasonEndModal(seasonResult);
   }
 }

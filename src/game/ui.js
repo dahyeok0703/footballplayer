@@ -425,7 +425,7 @@ function renderPlayer() {
         <h3>신체 / 계약</h3>
         <p>키 / 몸무게: <strong>${p.height || 178}cm / ${p.weight || 72}kg</strong></p>
         <p>주발: <strong>${p.foot}</strong> · 약발 ${'★'.repeat(p.weakFoot || 3)}${'☆'.repeat(5 - (p.weakFoot || 3))} · 스킬무브 ${'★'.repeat(p.skillMoves || 3)}${'☆'.repeat(5 - (p.skillMoves || 3))}</p>
-        <p>클럽: <strong>${p.clubName}</strong></p>
+        <p>클럽: <strong>${p.clubName}</strong>${p.isOnLoan && p.loanFrom ? ` <span class="text-warn">📋 ${escapeHtml(p.loanFrom.clubName)}에서 임대</span>` : ''}</p>
         <p>리그: ${getLeague(p.leagueId).name}</p>
         <p>나이: ${p.age}세 · 재능 ${'★'.repeat(p.talent)}${'☆'.repeat(5 - p.talent)}</p>
         <p>주급: <strong>${p.salary}만 €</strong></p>

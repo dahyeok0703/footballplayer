@@ -8,7 +8,7 @@ import { POSITION_STATS, calcOVR, groupOf, applyTraining } from '../engine/sim.j
 import { initSocialState, payWeeklyWage, generateWeeklyMediaActivity, processPendingPostComments, evaluateSeasonAwards } from '../engine/social.js';
 import { nextDay, addDays, compareDate, sameDate, dateLabel, daysBetween, isSeasonEnd } from '../engine/calendar.js';
 import { scheduleSeasonDecisions, getDecisionTemplate, applyDecisionEffect } from '../engine/decisions.js';
-import { generateDiverseOffers } from '../engine/offers.js';
+import { generateDiverseOffers, makeLoanRenewalOffer } from '../engine/offers.js';
 import { NATIONAL_TOURNAMENTS, NATION_TO_CONF } from '../data/tournaments.js';
 import { getContinentalForRank, getContinentalCup, A_MATCH_DATES, getInternationalMatchType, getPrimaryCup } from '../data/cups.js';
 import { runOffseasonSim, ensureTopRosters } from '../engine/world_sim.js';
@@ -325,9 +325,44 @@ export const game = {
       player.country = getLeague(newLeagueId).country;
     }
 
+    // 임대 만료 처리 — 모 클럽 복귀 + 갱신 오퍼 가능성
+    let loanReturnInfo = null;
+    if (player.isOnLoan && player.loanFrom) {
+      const loanedToClubId = player.clubId;
+      const loanedToLeagueId = player.leagueId;
+      const loanedToClubName = player.clubName;
+
+      // 모 클럽으로 복귀
+      const parentLeague = getLeague(player.loanFrom.leagueId);
+      const parentClubs = s.world.clubs[player.loanFrom.leagueId] || [];
+      const parentClub = parentClubs.find(c => c.id === player.loanFrom.clubId);
+      player.clubId = player.loanFrom.clubId;
+      player.clubName = player.loanFrom.clubName;
+      player.leagueId = player.loanFrom.leagueId;
+      if (parentClub) player.clubStrength = parentClub.strength;
+      if (parentLeague) player.country = parentLeague.country;
+      player.salary = player.loanFrom.salary || player.salary;
+      player.contractYears = Math.max(1, player.loanFrom.contractYears || 1);
+      player.isOnLoan = false;
+      delete player.loanFrom;
+
+      loanReturnInfo = { parentClubName: player.clubName, loanedToClubName, loanedToClubId, loanedToLeagueId };
+
+      // 임대 갱신 오퍼 (활약 좋고 어리면)
+      if (avgRating >= 7.0 && player.age <= 23 && Math.random() < 0.7) {
+        // 임대 갱신 오퍼는 player.age++ 직전(여기) 시점이라 정확함
+        const renewal = makeLoanRenewalOffer(s, loanedToClubId, loanedToLeagueId, loanedToClubName);
+        if (renewal) {
+          s.offers.push(renewal);
+          loanReturnInfo.renewalOffered = true;
+        }
+      }
+    }
+
     // 새 시즌 준비
     s.week = 1;
     s.calendar = { year: s.year, month: 8, day: 1 };
+    seasonReport.loanReturnInfo = loanReturnInfo;
     const newLeague = getLeague(player.leagueId);
     const newClubs = s.world.clubs[player.leagueId];
     // 본인 클럽이 새 리그에 없으면, 새 클럽 추가 (강등/승격 시 클럽도 따라 이동)
@@ -452,6 +487,24 @@ export const game = {
     const newClubs = s.world.clubs[offer.leagueId];
     const newClub = newClubs.find(c => c.id === offer.clubId);
     if (!newClub) return false;
+
+    // 임대 처리: 현재 클럽이 모 클럽이 됨 (이미 임대 중이면 모 클럽 유지)
+    if (offer.isLoan) {
+      if (!s.player.isOnLoan) {
+        s.player.loanFrom = {
+          clubId: s.player.clubId,
+          clubName: s.player.clubName,
+          leagueId: s.player.leagueId,
+          salary: s.player.salary,
+          contractYears: s.player.contractYears
+        };
+      }
+      s.player.isOnLoan = true;
+    } else if (s.player.isOnLoan) {
+      // 완전 이적 — 모 클럽 정보 폐기
+      s.player.isOnLoan = false;
+      delete s.player.loanFrom;
+    }
 
     s.player.clubId = newClub.id;
     s.player.clubName = newClub.name;
