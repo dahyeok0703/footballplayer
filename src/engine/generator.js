@@ -81,8 +81,35 @@ export function generatePlayer(opts = {}) {
 
   const pos = position || pick(POSITION_DIST);
   const playerAge = age !== null ? age : (isYouth ? rand(16, 19) : Math.round(clamp(gauss(26, 4), 17, 38)));
-  const ovr = clamp(Math.round(gauss((minOvr + maxOvr) / 2, (maxOvr - minOvr) / 4)), minOvr, maxOvr);
-  const potential = clamp(ovr + (playerAge < 23 ? rand(2, 12) : rand(0, 4)), ovr, 99);
+
+  // OVR: 정규분포 + 극단값 강한 제한 (99/98은 매우 드물게)
+  const center = (minOvr + maxOvr) / 2;
+  const sd = (maxOvr - minOvr) / 5;
+  let ovr;
+  for (let attempt = 0; attempt < 30; attempt++) {
+    ovr = Math.round(gauss(center, sd));
+    if (ovr >= 99 && Math.random() > 0.004) continue; // 99: 0.4% 통과
+    if (ovr >= 97 && Math.random() > 0.03) continue;  // 97-98: 3%
+    if (ovr >= 95 && Math.random() > 0.10) continue;  // 95-96: 10%
+    if (ovr >= 92 && Math.random() > 0.35) continue;  // 92-94: 35%
+    if (ovr >= minOvr && ovr <= maxOvr) break;
+  }
+  ovr = clamp(ovr, minOvr, maxOvr);
+
+  // 잠재력: 어린 선수만 잠재력↑. 극단값(99 잠재력)은 더 드물게 — 메시/호날두급.
+  let potential;
+  if (playerAge < 20) {
+    potential = ovr + rand(2, 14);
+  } else if (playerAge < 23) {
+    potential = ovr + rand(1, 8);
+  } else {
+    potential = ovr + rand(0, 4);
+  }
+  // 잠재력 극단값 제한
+  if (potential >= 99 && Math.random() > 0.05) potential = 94 + rand(0, 4); // 99 잠재력은 5%
+  if (potential >= 97 && Math.random() > 0.20) potential = 92 + rand(0, 4); // 97-98 잠재력은 20%
+  if (potential >= 94 && Math.random() > 0.45) potential = 88 + rand(0, 5);
+  potential = clamp(potential, ovr, 99);
 
   return {
     id: uid('p'),
@@ -97,6 +124,28 @@ export function generatePlayer(opts = {}) {
   };
 }
 
+/* ---------- 클럽 강도별 OVR 천장 (빅클럽 독점) ---------- */
+export function maxOvrForClub(club) {
+  if (club.strength >= 95) return 99;
+  if (club.strength >= 90) return 95;
+  if (club.strength >= 85) return 91;
+  if (club.strength >= 80) return 87;
+  if (club.strength >= 73) return 83;
+  if (club.strength >= 65) return 78;
+  if (club.strength >= 55) return 73;
+  return 68;
+}
+
+/* ---------- 클럽 강도별 잠재력 천장 ---------- */
+export function maxPotentialForClub(club) {
+  if (club.strength >= 95) return 99;
+  if (club.strength >= 88) return 96;
+  if (club.strength >= 80) return 92;
+  if (club.strength >= 72) return 88;
+  if (club.strength >= 62) return 82;
+  return 78;
+}
+
 export function generateClubRoster(club) {
   if (club.players) return club.players;
   const players = [];
@@ -107,17 +156,37 @@ export function generateClubRoster(club) {
     ...Array(8).fill('MF'),
     ...Array(5).fill('FW')
   ];
-  const baseStr = club.strength;
+  const clubMaxOvr = maxOvrForClub(club);
+  const clubMaxPot = maxPotentialForClub(club);
+  const baseStr = Math.min(club.strength, clubMaxOvr - 4);
+
+  // 같은 포지션 그룹에 OVR 90+ 선수는 1명만 허용 (월클 분산)
+  const eliteByGroup = { GK: 0, DF: 0, MF: 0, FW: 0 };
+
   for (let i = 0; i < positions.length; i++) {
-    // 주전(처음 11명)은 강도 ±5, 백업은 -10~-2
-    const offset = i < 11 ? rand(-3, 8) : rand(-15, -3);
-    const minOvr = clamp(baseStr + offset - 5, 35, 95);
-    const maxOvr = clamp(baseStr + offset + 5, 40, 99);
-    players.push(generatePlayer({
+    const grp = positions[i];
+    const offset = i < 11 ? rand(-3, 7) : rand(-15, -3);
+    let minOvrP = clamp(baseStr + offset - 5, 35, clubMaxOvr - 5);
+    let maxOvrP = clamp(baseStr + offset + 5, 40, clubMaxOvr);
+
+    // 같은 그룹에 이미 월클(90+) 있으면 강제로 낮춤
+    if (eliteByGroup[grp] >= 1 && maxOvrP >= 90) {
+      maxOvrP = 89;
+      if (minOvrP > 85) minOvrP = 85;
+    }
+
+    const p = generatePlayer({
       nationality: chance(0.7) ? club.countryCode : pickRandomNation(),
-      minOvr, maxOvr,
+      minOvr: minOvrP,
+      maxOvr: maxOvrP,
       position: positions[i]
-    }));
+    });
+    // 잠재력 천장 적용
+    if (p.potential > clubMaxPot) p.potential = clubMaxPot;
+    if (p.ovr > p.potential) p.ovr = p.potential;
+
+    if (p.ovr >= 90) eliteByGroup[grp]++;
+    players.push(p);
   }
   club.players = players;
   return players;

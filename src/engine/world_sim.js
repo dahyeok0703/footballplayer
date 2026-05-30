@@ -6,7 +6,7 @@
 
 import { LEAGUES, getLeague } from '../data/world.js';
 import { groupOf } from './sim.js';
-import { generateClubRoster, generatePlayer } from './generator.js';
+import { generateClubRoster, generatePlayer, maxOvrForClub, maxPotentialForClub } from './generator.js';
 import { NAME_POOLS, POOL_BY_CODE } from '../data/world.js';
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -40,9 +40,16 @@ export function ageNpcPlayers(world) {
 
   for (const club of allClubs) {
     if (!club.players) continue;
+    const clubMaxOvr = maxOvrForClub(club);
+    const clubMaxPot = maxPotentialForClub(club);
     const newRoster = [];
+    // 그룹별 월클 카운터 (같은 포지션 OVR 90+ 분산)
+    const eliteByGroup = { GK: 0, DF: 0, MF: 0, FW: 0 };
     for (const p of club.players) {
       p.age = (p.age || 22) + 1;
+      // 클럽 강도 대비 인플레된 OVR/잠재력 정리
+      if (p.ovr > clubMaxOvr) p.ovr = clubMaxOvr;
+      if (p.potential > clubMaxPot) p.potential = clubMaxPot;
 
       // 은퇴 확률
       let retireProb = 0;
@@ -68,6 +75,19 @@ export function ageNpcPlayers(world) {
       if (p.ovr > prevOvr) growthCount++;
       else if (p.ovr < prevOvr) declineCount++;
 
+      // 같은 그룹 월클 분산: 이미 90+ 있으면 추가 인원 OVR 캡
+      const grp = (function(){
+        const pos = p.position;
+        if (pos === 'GK') return 'GK';
+        if (['CB','LB','RB','LWB','RWB'].includes(pos)) return 'DF';
+        if (['CDM','CM','CAM','LM','RM'].includes(pos)) return 'MF';
+        return 'FW';
+      })();
+      if (p.ovr >= 90) {
+        if (eliteByGroup[grp] >= 1) p.ovr = 89;
+        else eliteByGroup[grp]++;
+      }
+
       p.value = Math.round(p.ovr * p.ovr * Math.max(1, (p.potential - p.ovr + 5)) * 0.3);
       newRoster.push(p);
     }
@@ -84,8 +104,9 @@ export function ageNpcPlayers(world) {
 
 function makeYouthPlayer(club) {
   const positions = ['GK','CB','LB','RB','CDM','CM','CAM','LM','RM','LW','RW','ST','CF'];
+  const clubMaxPot = maxPotentialForClub(club);
   const baseOvr = clamp(Math.round(club.strength * 0.7 + rand(-10, 5)), 45, 75);
-  return generatePlayer({
+  const p = generatePlayer({
     nationality: chance(0.7) ? club.countryCode : pick(['KOR','BRA','ARG','ESP','FRA','ENG','GER','POR']),
     minOvr: baseOvr - 5,
     maxOvr: baseOvr + 5,
@@ -93,6 +114,8 @@ function makeYouthPlayer(club) {
     position: pick(positions),
     isYouth: true
   });
+  if (p.potential > clubMaxPot) p.potential = clubMaxPot;
+  return p;
 }
 
 /* ============================================================
@@ -157,8 +180,13 @@ export function generateWorldRankings(world) {
     }
   }
   all.sort((a, b) => b.ovr - a.ovr);
-  const overall = all.slice(0, 50);
-  const prospects = [...all].filter(p => p.age <= 21).sort((a, b) => b.potential - a.potential).slice(0, 30);
+  // 톱 30 OVR — 자연스러운 분포 (이미 generatePlayer에서 극단값 제한)
+  const overall = all.slice(0, 30);
+  // 유망주 톱 20 — 21세 이하 잠재력 기준 (잠재력도 제한된 분포)
+  const prospects = [...all]
+    .filter(p => p.age <= 21 && p.potential >= 85) // 잠재력 85+만
+    .sort((a, b) => (b.potential * 1000 + b.ovr) - (a.potential * 1000 + a.ovr))
+    .slice(0, 20);
   return { overall, prospects };
 }
 

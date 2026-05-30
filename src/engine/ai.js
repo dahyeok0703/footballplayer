@@ -338,3 +338,51 @@ export function fallbackDatingOpener(partner) {
   };
   return openers[partner.type] || openers.civilian;
 }
+
+/* ============================================================
+ *  매치 후 AI 헤드라인 / 감독 평가 / 팬 반응 (선택적)
+ * ============================================================ */
+export async function generateMatchNarrative(context) {
+  const system = `당신은 축구 전문 매체의 한국어 콘텐츠 작가입니다.
+방금 끝난 경기를 다음 톤으로 압축적으로 작성하세요:
+1) 언론 헤드라인 (1문장 — 자극적이거나 분석적)
+2) 감독 한마디 (1문장 — 직설적인 큰따옴표 코멘트)
+3) 팬 트윗 3개 (각 1문장 — SNS 톤, 이모지 가능)
+
+반드시 JSON으로:
+{
+  "headline": "...",
+  "coachQuote": "...",
+  "fanTweets": ["...", "...", "..."]
+}`;
+  const prompt = `경기 정보:
+- 결과: ${context.myGoals}-${context.oppGoals} (${context.result === 'W' ? '승' : (context.result === 'L' ? '패' : '무')})
+- 상대: ${context.oppName}
+- 대회: ${context.competition}${context.round ? ' ' + context.round : ''}
+- 내 활약: 평점 ${context.rating} · ${context.goals}골 ${context.assists}어시
+- 결정적 장면: ${(context.keyMoments || []).map(km => km.narrative).join(' / ') || '없음'}
+
+위 경기에 대한 헤드라인/감독한마디/팬트윗 3개를 작성하세요.`;
+
+  const text = await callClaude({ system, prompt, maxTokens: 600, temperature: 0.95 });
+  if (!text) return null;
+  try {
+    const arrMatch = text.match(/\{[\s\S]*\}/);
+    return JSON.parse(arrMatch ? arrMatch[0] : text);
+  } catch (e) { return null; }
+}
+
+/* ---------- 시즌 종료 AI 요약 ---------- */
+export async function generateSeasonReview(context) {
+  const system = `당신은 축구 시즌 결산 칼럼니스트입니다.
+선수의 시즌을 짧은 한국어 칼럼 (3~4 문장)으로 작성하세요. 자연스럽고 감정 있게.`;
+  const prompt = `선수: ${context.name} (${context.position}, ${context.age}세, ${context.clubName})
+시즌 성적: ${context.matches}경기 ${context.goals}골 ${context.assists}어시 평균평점 ${context.avgRating}
+리그 순위: ${context.rank}위
+트로피: ${(context.trophies || []).map(t => t.name).join(', ') || '없음'}
+${context.awards && context.awards.length > 0 ? '개인상: ' + context.awards.map(a => a.name).join(', ') : ''}
+
+이 시즌 결산 칼럼을 작성하세요.`;
+
+  return await callClaude({ system, prompt, maxTokens: 400, temperature: 0.9 });
+}

@@ -359,13 +359,32 @@ function fixtureCardHtml(m, future = false) {
 function playedCardHtml(m) {
   const cls = m.result === 'W' ? 'win' : (m.result === 'L' ? 'loss' : 'draw');
   const badgeClass = { league: 'league', cup: 'cup', continental: 'cont', national: 'nat' }[m.type];
-  const badgeText = { league: '리그', cup: '컵', continental: '대륙간', national: '국대' }[m.type];
+  // 실제 컵 명칭 표시 (예: UCL / FA Cup / K League 1)
+  const compName = m.competition || ({ league: '리그', cup: '컵', continental: '대륙간', national: '국대' }[m.type]);
+  const compShort = shortenCompName(compName);
+  const missedTag = m.missed ? ' <span class="text-bad">[결장]</span>' : '';
   const gAssist = (m.goals > 0 ? ` ⚽${m.goals}` : '') + (m.assists > 0 ? ` 🅰${m.assists}` : '');
+  const ratingPart = m.missed ? '' : ` <small class="text-muted">평점 ${m.rating}${gAssist}</small>`;
   return `<div class="fixture past">
-    <span class="badge ${badgeClass}">${badgeText}</span>
-    <span>vs ${m.opp} <small class="text-muted">평점 ${m.rating}${gAssist}</small></span>
-    <span class="res ${cls}">${m.myGoals}-${m.oppGoals}</span>
+    <span class="badge ${badgeClass}" title="${escapeHtml(compName)}">${escapeHtml(compShort)}</span>
+    <span>vs ${escapeHtml(m.opp)}${missedTag}${ratingPart}</span>
+    <span class="res ${cls}"><strong>${m.myGoals}-${m.oppGoals}</strong></span>
   </div>`;
+}
+
+function shortenCompName(name) {
+  if (!name) return '경기';
+  const map = {
+    'UEFA 챔피언스리그': 'UCL', 'UEFA 유로파리그': 'UEL', 'UEFA 유로파 컨퍼런스리그': 'UECL',
+    '코파 리베르타도레스': 'CL', '코파 수다메리카나': 'CS',
+    'AFC 챔피언스리그 엘리트': 'ACLE', 'AFC 챔피언스리그 2': 'ACL2', 'AFC 챌린지리그': 'AFCC',
+    'CAF 챔피언스리그': 'CAFCL', 'CAF 컨페더레이션스컵': 'CAFCC',
+    'CONCACAF 챔피언스컵': 'CCL', 'OFC 챔피언스리그': 'OFCCL',
+    '월드컵 예선': 'WC예선', '국가대표 친선전': '친선', '친선전': '친선'
+  };
+  if (map[name]) return map[name];
+  if (name.length <= 14) return name;
+  return name.slice(0, 12) + '…';
 }
 
 /* ---------- 내 선수 ---------- */
@@ -1732,7 +1751,9 @@ VIEWS.transfers = function renderTransfersV2() {
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
           <div>
             <strong style="font-size:1.05rem;">${escapeHtml(o.clubName)}</strong> ${rivalBadge}
-            <div class="text-muted" style="font-size:0.83rem;">${escapeHtml(o.leagueName)} · 강도 ${o.leagueStrength}</div>
+            <div class="text-muted" style="font-size:0.83rem;">
+              🌍 ${escapeHtml(getLeagueCountry(o.leagueId))} · ${escapeHtml(o.leagueName)} · 강도 ${o.leagueStrength}
+            </div>
           </div>
           <div style="text-align:right;">
             <span class="badge cont">${escapeHtml(o.roleLabel)}</span>
@@ -2061,4 +2082,17 @@ export function renderTraitsSection() {
       </details>
     </div>
   `;
+}
+
+/* ---------- 리그 ID로 국가 / 깃발 가져오기 ---------- */
+function getLeagueCountry(leagueId) {
+  const l = getLeague(leagueId);
+  if (!l) return '';
+  const flag = { ENG:'🏴', ESP:'🇪🇸', GER:'🇩🇪', ITA:'🇮🇹', FRA:'🇫🇷', POR:'🇵🇹', NED:'🇳🇱', BEL:'🇧🇪', TUR:'🇹🇷', SCO:'🏴', RUS:'🇷🇺', UKR:'🇺🇦', GRE:'🇬🇷', SUI:'🇨🇭', AUT:'🇦🇹', DEN:'🇩🇰', NOR:'🇳🇴', SWE:'🇸🇪', POL:'🇵🇱', CZE:'🇨🇿', CRO:'🇭🇷', SRB:'🇷🇸',
+                 BRA:'🇧🇷', ARG:'🇦🇷', URU:'🇺🇾', COL:'🇨🇴', CHI:'🇨🇱', PER:'🇵🇪', ECU:'🇪🇨', PAR:'🇵🇾', BOL:'🇧🇴', VEN:'🇻🇪',
+                 USA:'🇺🇸', MEX:'🇲🇽', CAN:'🇨🇦', CRC:'🇨🇷', HON:'🇭🇳', PAN:'🇵🇦', JAM:'🇯🇲',
+                 KOR:'🇰🇷', JPN:'🇯🇵', CHN:'🇨🇳', SAU:'🇸🇦', UAE:'🇦🇪', QAT:'🇶🇦', IRN:'🇮🇷', IRQ:'🇮🇶', UZB:'🇺🇿', THA:'🇹🇭', VIE:'🇻🇳', IND:'🇮🇳', AUS:'🇦🇺',
+                 EGY:'🇪🇬', MAR:'🇲🇦', TUN:'🇹🇳', ALG:'🇩🇿', RSA:'🇿🇦', NGA:'🇳🇬', GHA:'🇬🇭', SEN:'🇸🇳', CIV:'🇨🇮', CMR:'🇨🇲',
+                 NZL:'🇳🇿' }[l.code] || '🌍';
+  return `${flag} ${l.country}`;
 }

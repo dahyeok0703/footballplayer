@@ -10,6 +10,7 @@ import { dateLabel, addDays } from './engine/calendar.js';
 import { getContinentalCup, getPrimaryCup, getDomesticCups } from './data/cups.js';
 import { uid, pick, rand, chance } from './engine/generator.js';
 import { selectHighlights, evaluateChoice, initMatchState, applyHighlightOutcome, finalizeMatch } from './engine/match.js';
+import { generateMatchNarrative, hasApiKey } from './engine/ai.js';
 
 let busy = false;
 
@@ -152,6 +153,25 @@ async function processFixture(fixture) {
     advanceCupRound(fixture);
   } else if (fixture.type === 'cup' || (fixture.type === 'continental' && fixture.round !== '조별리그')) {
     game.log_(`🚪 ${fixture.competition} ${fixture.round} 탈락`, 'bad');
+  }
+
+  // AI 매치 narrative (빅매치 또는 좋은/나쁜 활약 시 + API 키 있을 때만)
+  if (hasApiKey() && (fixture.type === 'continental' || fixture.type === 'national' ||
+      (fixture.type === 'cup' && ['8강','준결승','결승'].includes(fixture.round)) ||
+      result.rating >= 8.5 || result.rating < 5.0)) {
+    try {
+      const narrative = await generateMatchNarrative({
+        myGoals: result.myGoals, oppGoals: result.oppGoals, result: result.result,
+        oppName: fixture.oppName, competition: fixture.competition, round: fixture.round,
+        rating: result.rating, goals: result.goals, assists: result.assists,
+        keyMoments: result.keyMoments
+      });
+      if (narrative) {
+        if (narrative.headline) result.pressHeadline = narrative.headline;
+        if (narrative.coachQuote) result.coachFeedback = narrative.coachQuote;
+        if (narrative.fanTweets && narrative.fanTweets.length >= 3) result.fanComments = narrative.fanTweets.slice(0, 3);
+      }
+    } catch (e) { /* fallback to template */ }
   }
 
   // 경기 후 종합 화면
