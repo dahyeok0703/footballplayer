@@ -113,6 +113,38 @@ function simGoals(attack, defense) {
   return g;
 }
 
+/* ---------- 본인 결장 매치 백그라운드 시뮬 ----------
+ *  본인이 없어도 팀은 경기를 함. 결과/순위에 반영하되 본인 통계엔 안 들어감.
+ */
+export function simulateBackgroundMatch(state, fixture) {
+  const teamStr = (state.player.clubStrength || 70) - 4; // 핵심 결장 페널티
+  const oppStr = fixture.oppStr || 70;
+  const homeBoost = fixture.home ? 3 : -2;
+  const myGoals = simGoals(teamStr + homeBoost, oppStr);
+  const oppGoals = simGoals(oppStr, teamStr + homeBoost);
+  const result = myGoals > oppGoals ? 'W' : (myGoals < oppGoals ? 'L' : 'D');
+  return { myGoals, oppGoals, result };
+}
+
+/* ---------- 결장 매치 기록 (리그 테이블 갱신 + 본인 통계는 0) ---------- */
+export function recordBackgroundMatch(state, fixture, result) {
+  const ss = state.season;
+  ss.played.push({
+    week: fixture.week, type: fixture.type, competition: fixture.competition,
+    opp: fixture.oppName, home: fixture.home,
+    myGoals: result.myGoals, oppGoals: result.oppGoals,
+    result: result.result, rating: 0,
+    goals: 0, assists: 0,
+    round: fixture.round,
+    missed: true
+  });
+  // 리그 테이블: 본인 팀 + 상대 팀 양쪽 모두 갱신 (재참여, 평소 매치와 동일하게)
+  if (fixture.type === 'league') {
+    if (ss.leagueTable[state.player.clubId]) updateTable(ss.leagueTable, state.player.clubId, result.myGoals, result.oppGoals);
+    if (ss.leagueTable[fixture.opp]) updateTable(ss.leagueTable, fixture.opp, result.oppGoals, result.myGoals);
+  }
+}
+
 /* ---------- 백그라운드 리그 시뮬 (나머지 클럽 간) ---------- */
 export function simulateLeagueRound(clubs, table) {
   // 클럽 간 매치: 라운드 로빈 1주씩 한 매치씩
@@ -189,7 +221,16 @@ export function ageGrowthFactor(age, position) {
   return -1.8;
 }
 
-export function applyTraining(player, trainAlloc) {
+/* ---------- 훈련 강도 정의 ---------- */
+export const TRAIN_INTENSITY = {
+  low:     { name: '낮음',  gainMul: 0.7, fatigue: 3,  injuryRisk: 0.005, moraleDelta: +1 },
+  normal:  { name: '보통',  gainMul: 1.0, fatigue: 8,  injuryRisk: 0.015, moraleDelta: 0 },
+  high:    { name: '높음',  gainMul: 1.4, fatigue: 16, injuryRisk: 0.04,  moraleDelta: -1 },
+  extreme: { name: '혹사',  gainMul: 1.8, fatigue: 28, injuryRisk: 0.10,  moraleDelta: -3 }
+};
+
+export function applyTraining(player, trainAlloc, intensity = 'normal') {
+  const intDef = TRAIN_INTENSITY[intensity] || TRAIN_INTENSITY.normal;
   const ageFactor = ageGrowthFactor(player.age, groupOf(player.position));
   const talentFactor = 0.5 + player.talent * 0.25;
   const ovr = calcOVR(player);
@@ -198,10 +239,17 @@ export function applyTraining(player, trainAlloc) {
   for (const [stat, pts] of Object.entries(trainAlloc)) {
     if (pts === 0) continue;
     const gapFactor = clamp(potentialGap / 25, 0.1, 1.5);
-    const gain = pts * ageFactor * talentFactor * gapFactor * (0.3 + Math.random() * 0.4);
+    const gain = pts * ageFactor * talentFactor * gapFactor * intDef.gainMul * (0.3 + Math.random() * 0.4);
     const before = player.stats[stat];
     player.stats[stat] = clamp(Math.round(before + gain), 1, 99);
     if (player.stats[stat] > player.potential + 5) player.stats[stat] = player.potential + 5;
+  }
+
+  // 피로/사기/부상 효과
+  player.fatigue = clamp((player.fatigue || 0) + intDef.fatigue, 0, 100);
+  player.morale = clamp((player.morale || 70) + intDef.moraleDelta, 20, 100);
+  if (Math.random() < intDef.injuryRisk) {
+    player.injury = (player.injury || 0) + Math.floor(Math.random() * 4) + 1;
   }
 }
 

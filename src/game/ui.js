@@ -425,6 +425,8 @@ function renderPlayer() {
           <tbody>${p.history.map(h => `<tr><td>${h.season}</td><td>${h.age}</td><td>${h.club}</td><td>${h.leagueName}</td><td class="num">${h.rank}</td><td class="num">${h.matches}</td><td class="num">${h.goals}</td><td class="num">${h.assists}</td><td class="num">${(+h.avgRating).toFixed(2)}</td><td class="num">${h.ovrEnd}</td></tr>`).join('')}</tbody></table>`}
       </div>
 
+      ${renderTraitsSection()}
+
       ${renderRivalsSection()}
 
       <div class="card wide">
@@ -744,9 +746,22 @@ export function getTrainAlloc() { return trainAlloc; }
 function renderTrainOptionsHtml() {
   const s = game.state;
   if (!s) return '';
+  if (!s.training) s.training = { alloc: {}, intensity: 'normal' };
+  // 호환: 모듈 로컬 trainAlloc과 state.training.alloc 동기화
+  s.training.alloc = trainAlloc;
   const used = Object.values(trainAlloc).reduce((a, b) => a + b, 0);
+  const intensity = s.training.intensity || 'normal';
+  const fatigue = s.player.fatigue || 0;
+  const fatigueClass = fatigue >= 70 ? 'text-bad' : (fatigue >= 40 ? 'text-warn' : 'text-good');
   return `
-    <p>남은 포인트: <strong>${5 - used}</strong> / 5</p>
+    <p>훈련 포인트: <strong>${5 - used} / 5</strong> · 피로도 <span class="${fatigueClass}">${fatigue}</span>/100</p>
+    <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:4px; margin:8px 0;">
+      ${['low','normal','high','extreme'].map(i => {
+        const labels = { low:'😌 낮음', normal:'⚙️ 보통', high:'🔥 높음', extreme:'💀 혹사' };
+        return `<button data-intensity="${i}" class="${intensity === i ? 'primary' : ''}" style="padding:5px; font-size:0.78rem;">${labels[i]}</button>`;
+      }).join('')}
+    </div>
+    <p class="hint" style="font-size:0.75rem;">${getIntensityDesc(intensity)}</p>
     <div id="train-list">
     ${POSITION_STATS[groupOf(s.player.position)].map(k => `
       <div class="train-opt">
@@ -762,6 +777,15 @@ function renderTrainOptionsHtml() {
   `;
 }
 
+function getIntensityDesc(intensity) {
+  return {
+    low: '낮음 — 성장 -30%, 피로 적음, 사기 +1',
+    normal: '보통 — 표준',
+    high: '높음 — 성장 +40%, 피로 ↑, 부상위험 4%',
+    extreme: '혹사 — 성장 +80%, 피로 ↑↑, 부상위험 10%, 사기 -3'
+  }[intensity];
+}
+
 function bindTrainOptions() {
   document.querySelectorAll('#train-list button').forEach(btn => {
     btn.onclick = () => {
@@ -771,6 +795,14 @@ function bindTrainOptions() {
       const total = Object.values(trainAlloc).reduce((a, b) => a + b, 0);
       if (act === '+' && total < 5) trainAlloc[stat] = cur + 1;
       else if (act === '-' && cur > 0) trainAlloc[stat] = cur - 1;
+      renderHub();
+    };
+  });
+  document.querySelectorAll('[data-intensity]').forEach(btn => {
+    btn.onclick = () => {
+      const s = game.state;
+      if (!s.training) s.training = { alloc: {}, intensity: 'normal' };
+      s.training.intensity = btn.dataset.intensity;
       renderHub();
     };
   });
@@ -1467,6 +1499,7 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
           ${status === 'absent_injury' ? '🚑 부상으로 결장' : '😞 명단 제외 — 출전 시간 부족'}
         </p>
         <p class="hint">${status === 'absent_injury' ? '회복 후 다시 도전.' : '훈련/업그레이드로 폼을 끌어올려야 함.'}</p>
+        <p class="text-info">📊 팀은 그래도 경기를 진행 (결과는 자동 반영).</p>
         <div class="actions">
           <button class="primary" id="match-skip">확인</button>
         </div>
@@ -1480,14 +1513,19 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
     return;
   }
 
+  // 후보 출전 — 교체 출전 선택 가능
+  const subAvailable = (status === 'bench') && Math.random() < 0.6;
+
   const overlay = document.createElement('div');
   overlay.id = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal-content" style="max-width:600px;">
       <h3>⚽ ${compName} 경기 준비</h3>
       <p class="text-muted">${fixture.home ? '🏠' : '✈️'} vs <strong>${escapeHtml(fixture.oppName)}</strong> · 상대 강도 ${fixture.oppStr}</p>
-      <p>출전 상태: <strong class="${status === 'starter' ? 'text-good' : 'text-warn'}">${status === 'starter' ? '⚽ 선발' : '🪑 후보 (벤치)'}</strong></p>
+      <p>출전 상태: <strong class="${status === 'starter' ? 'text-good' : 'text-warn'}">${status === 'starter' ? '⚽ 선발' : (subAvailable ? '🔄 교체 출전 가능' : '🪑 후보 (벤치)')}</strong></p>
       <p>내 OVR: <strong>${ovr}</strong> · 사기: <strong>${player.morale}</strong>/100 · 부상위험: ${player.age > 30 ? '중' : '낮음'}</p>
+      ${status === 'bench' && !subAvailable ? '<p class="hint">⚠ 오늘은 교체 출전 기회 없음 — 팀 결과만 반영됩니다.</p>' : ''}
+      ${subAvailable ? '<p class="text-info">💡 교체 출전 — 후반 30분 정도 출전. 평점 시작점 낮음.</p>' : ''}
 
       <h4 style="margin-top:14px;">감독 전술 선택</h4>
       <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px;">
@@ -1512,7 +1550,7 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
       </div>
 
       <div class="actions" style="margin-top:16px;">
-        <button class="primary" id="match-start">⚽ 경기 시작</button>
+        <button class="primary" id="match-start">⚽ ${status === 'starter' ? '경기 시작' : (subAvailable ? '교체 출전' : '벤치에서 관전')}</button>
       </div>
     </div>
   `;
@@ -1521,7 +1559,11 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
     const tactic = overlay.querySelector('input[name=tactic]:checked').value;
     const role = overlay.querySelector('input[name=role]:checked').value;
     document.body.removeChild(overlay);
-    callback({ tactic, role, status });
+    if (status === 'bench' && !subAvailable) {
+      callback({ skipMatch: true });
+    } else {
+      callback({ tactic, role, status, isSubstitute: status === 'bench' && subAvailable });
+    }
   };
 }
 
@@ -1983,6 +2025,40 @@ export function renderRivalsSection() {
           `).join('')}
         </tbody>
       </table>
+    </div>
+  `;
+}
+
+/* ---------- 선수 특성 섹션 ---------- */
+import { TRAITS, getTrait } from '../data/traits.js';
+
+export function renderTraitsSection() {
+  const s = game.state;
+  const owned = (s.player.traits || []).map(id => getTrait(id)).filter(Boolean);
+  return `
+    <div class="card wide">
+      <h3>✨ 보유 특성 (${owned.length}/${TRAITS.length})</h3>
+      ${owned.length === 0 ? '<p class="hint">아직 보유 특성 없음. 능력치/통산 기록 달성 시 자동 획득.</p>' : `
+        <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:8px;">
+          ${owned.map(t => `
+            <div style="background:var(--bg-2); padding:8px 10px; border-radius:6px; border-left:3px solid var(--accent-2);">
+              <strong>${escapeHtml(t.name)}</strong>
+              <p style="font-size:0.78rem; color:var(--muted); margin-top:2px;">${escapeHtml(t.desc)}</p>
+            </div>
+          `).join('')}
+        </div>
+      `}
+      <details style="margin-top:10px;">
+        <summary style="cursor:pointer; color:var(--muted); font-size:0.85rem;">전체 ${TRAITS.length}개 특성 보기</summary>
+        <div style="margin-top:8px; max-height:300px; overflow-y:auto;">
+          ${TRAITS.map(t => {
+            const has = (s.player.traits || []).includes(t.id);
+            return `<div style="padding:4px 8px; opacity:${has ? 1 : 0.55}; font-size:0.82rem;">
+              ${has ? '✅' : '🔒'} <strong>${escapeHtml(t.name)}</strong> <span class="text-muted">— ${escapeHtml(t.desc)}</span>
+            </div>`;
+          }).join('')}
+        </div>
+      </details>
     </div>
   `;
 }

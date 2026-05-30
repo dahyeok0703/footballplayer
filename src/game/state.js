@@ -4,7 +4,7 @@
 
 import { LEAGUES, REAL_CLUBS, TROPHIES, NAME_POOLS, getLeague } from '../data/world.js';
 import { generateLeagueClubs, generateClubRoster, generateInternationalFixtures, generateSeasonFixtures, selectContinentalOpponents, pick, rand, clamp, chance } from '../engine/generator.js';
-import { POSITION_STATS, calcOVR, groupOf } from '../engine/sim.js';
+import { POSITION_STATS, calcOVR, groupOf, applyTraining } from '../engine/sim.js';
 import { initSocialState, payWeeklyWage, generateWeeklyMediaActivity, processPendingPostComments, evaluateSeasonAwards } from '../engine/social.js';
 import { nextDay, addDays, compareDate, sameDate, dateLabel, daysBetween, isSeasonEnd } from '../engine/calendar.js';
 import { scheduleSeasonDecisions, getDecisionTemplate, applyDecisionEffect } from '../engine/decisions.js';
@@ -12,6 +12,7 @@ import { generateDiverseOffers } from '../engine/offers.js';
 import { NATIONAL_TOURNAMENTS, NATION_TO_CONF } from '../data/tournaments.js';
 import { getContinentalForRank, getContinentalCup, A_MATCH_DATES, getInternationalMatchType, getPrimaryCup } from '../data/cups.js';
 import { runOffseasonSim, ensureTopRosters } from '../engine/world_sim.js';
+import { checkNewlyEarnedTraits, getTrait } from '../data/traits.js';
 
 const SAVE_KEY = 'wfl_save_v1';
 const DATE_FORMAT = (year, week) => {
@@ -125,6 +126,7 @@ export const game = {
       pendingDecision: null,
       pendingTransfer: null,
       flags: {},
+      training: { alloc: {}, intensity: 'normal' },
       social: initSocialState(player)
     };
 
@@ -277,6 +279,16 @@ export const game = {
     // 시즌 종료 개인상 평가 (발롱도르, 골든부트, 푸스카스 등 모두)
     const seasonAwards = evaluateSeasonAwards(s, seasonReport);
     seasonReport.awards = seasonAwards;
+
+    // 신규 특성 획득 체크
+    player.traits = player.traits || [];
+    player.careerStats.bestSeasonGoals = Math.max(player.careerStats.bestSeasonGoals || 0, ss.goals || 0);
+    player.careerStats.ballonDors = (player.trophies || []).filter(t => t.name === '발롱도르').length;
+    const newTraits = checkNewlyEarnedTraits(player, player.careerStats, player.traits);
+    if (newTraits.length > 0) {
+      player.traits.push(...newTraits);
+      seasonReport.newTraits = newTraits.map(id => getTrait(id)).filter(Boolean);
+    }
 
     // 세계 시뮬: NPC 노화/은퇴/성장, 시즌 어워드, 빅딜, 랭킹, 라이벌
     const offseason = runOffseasonSim(s);
@@ -578,6 +590,16 @@ function advanceOneDay(s) {
   if (newWeek !== s.week) {
     s.week = newWeek;
     if (s.player.injury > 0) s.player.injury = Math.max(0, s.player.injury - 1);
+    // 매주 훈련 자동 적용
+    if (s.training && s.player.injury === 0) {
+      const alloc = s.training.alloc || {};
+      const usedPts = Object.values(alloc).reduce((a, b) => a + b, 0);
+      if (usedPts > 0) {
+        applyTraining(s.player, alloc, s.training.intensity || 'normal');
+      }
+    }
+    // 자연 피로 회복 (주당 -10)
+    s.player.fatigue = Math.max(0, (s.player.fatigue || 0) - 10);
     simulateOtherClubsLeagueRound(s);
     payWeeklyWage(s);
     processPendingPostComments(s).catch(() => {});

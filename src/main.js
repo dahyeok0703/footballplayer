@@ -4,7 +4,7 @@
 
 import { game, generateOneOffer } from './game/state.js';
 import { renderStart, renderView, refreshStatus, showGame, showMatchModal, showSeasonEndModal, renderEnd, getTrainAlloc, showDecisionModal, showTournamentCallupModal, showPreMatchChoice, showPreMatchHighlightModal, showHighlightModal, showHighlightResult, showPostMatchSummary } from './game/ui.js';
-import { simulateMatch, recordMatch, applyTraining, calcOVR } from './engine/sim.js';
+import { simulateMatch, recordMatch, applyTraining, calcOVR, simulateBackgroundMatch, recordBackgroundMatch } from './engine/sim.js';
 import { applyPerMatchGrowth } from './engine/social.js';
 import { dateLabel, addDays } from './engine/calendar.js';
 import { getContinentalCup, getPrimaryCup, getDomesticCups } from './data/cups.js';
@@ -88,13 +88,27 @@ async function processFixture(fixture) {
   // ----- 경기 전: 전술/역할 선택 + 출전 상태 확인 -----
   const preMatch = await new Promise(res => showPreMatchHighlightModal(fixture, s.player, res));
   if (preMatch.skipMatch) {
-    game.log_(`🚑 ${dateLabel(fixture.date)} vs ${fixture.oppName} 결장`, 'bad');
+    // 결장 — 그래도 팀은 경기를 함. 결과 시뮬해서 리그 테이블 반영
+    const bgResult = simulateBackgroundMatch(s, fixture);
+    recordBackgroundMatch(s, fixture, bgResult);
+    const cls = bgResult.result === 'W' ? 'good' : (bgResult.result === 'L' ? 'bad' : 'event');
+    game.log_(`🚑 ${dateLabel(fixture.date)} vs ${fixture.oppName} 결장 — 팀 결과: ${bgResult.myGoals}-${bgResult.oppGoals} (${bgResult.result})`, cls);
+
+    // 컵/대륙간 진출 처리도 동일 (팀이 이기면 다음 라운드)
+    if (bgResult.result === 'W' || (bgResult.result === 'D' && Math.random() < 0.4)) {
+      advanceCupRound(fixture);
+    } else if (fixture.type === 'cup' || (fixture.type === 'continental' && fixture.round !== '조별리그')) {
+      game.log_(`🚪 ${fixture.competition} ${fixture.round} 탈락`, 'bad');
+    }
     return;
   }
-  const { tactic, role, status } = preMatch;
+  const { tactic, role, status, isSubstitute } = preMatch;
 
-  // ----- 경기 중: 하이라이트 시퀀스 -----
-  const highlights = selectHighlights(s.player, fixture, role);
+  // ----- 경기 중: 하이라이트 시퀀스 (교체 출전이면 2-3개만) -----
+  let highlights = selectHighlights(s.player, fixture, role);
+  if (isSubstitute) {
+    highlights = highlights.slice(-3); // 후반 2-3개만 (대략 60-90분)
+  }
   const matchState = initMatchState(fixture, tactic, role);
 
   // 결정 효과 (사전 결정에서 받은 보너스)
@@ -104,6 +118,8 @@ async function processFixture(fixture) {
   }
   // 후보 출전이면 평점 시작점 -5
   if (status === 'bench') matchState.ratingPoints -= 5;
+  // 교체 출전이면 평점 시작점 -3 (출전 시간 적음)
+  if (isSubstitute) matchState.ratingPoints -= 3;
 
   for (let i = 0; i < highlights.length; i++) {
     const hl = highlights[i];
@@ -337,6 +353,9 @@ async function processSeasonEnd() {
     if (seasonResult.relegated) game.log_(`⬇️ 강등...`, 'bad');
     if (seasonResult.report.awards && seasonResult.report.awards.length > 0) {
       seasonResult.report.awards.forEach(a => game.log_(`🏅 개인상: ${a.name}`, 'event'));
+    }
+    if (seasonResult.report.newTraits && seasonResult.report.newTraits.length > 0) {
+      seasonResult.report.newTraits.forEach(t => game.log_(`✨ 신규 특성 획득: ${t.name} — ${t.desc}`, 'event'));
     }
     showSeasonEndModal(seasonResult);
   }

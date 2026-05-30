@@ -7,6 +7,7 @@
 
 import { HIGHLIGHT_TEMPLATES, POST_MATCH_NARRATIVES } from '../data/highlights.js';
 import { groupOf, calcOVR } from './sim.js';
+import { getTraitBonus } from '../data/traits.js';
 
 function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -73,7 +74,7 @@ export function evaluateChoice(player, highlight, choiceIdx, tactic, role, match
   if (!choice) return null;
 
   const stat = (player.stats && player.stats[choice.stat]) || 50;
-  // 역할 보너스: 매칭되는 stat이면 +5
+  // 역할 보너스
   const roleObj = ROLES.find(r => r.id === role);
   const roleBonus = (roleObj && roleObj.statBoost === choice.stat) ? 5 : 0;
   // 전술 보너스
@@ -82,8 +83,12 @@ export function evaluateChoice(player, highlight, choiceIdx, tactic, role, match
   const tacticBonus = tacticObj ? (isAttack ? tacticObj.attackMod : tacticObj.defendMod) : 0;
   // 사기/컨디션
   const moraleBonus = ((player.morale || 70) - 70) * 0.15;
+  // 피로 페널티 (피로 50+면 능력치 -5, 70+면 -10)
+  const fatiguePen = (player.fatigue || 0) >= 70 ? -10 : ((player.fatigue || 0) >= 50 ? -5 : 0);
+  // 특성 보너스
+  const traitBonus = getTraitBonus(player, highlight.situation, matchState?.fixture?.type);
 
-  const effective = stat + roleBonus + tacticBonus + moraleBonus + rand(-8, 8);
+  const effective = stat + roleBonus + tacticBonus + moraleBonus + fatiguePen + traitBonus + rand(-8, 8);
   const diff = choice.diff || 65;
   const success = effective >= diff;
 
