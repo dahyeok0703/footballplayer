@@ -11,6 +11,7 @@ import { scheduleSeasonDecisions, getDecisionTemplate, applyDecisionEffect } fro
 import { generateDiverseOffers } from '../engine/offers.js';
 import { NATIONAL_TOURNAMENTS, NATION_TO_CONF } from '../data/tournaments.js';
 import { getContinentalForRank, getContinentalCup, A_MATCH_DATES, getInternationalMatchType, getPrimaryCup } from '../data/cups.js';
+import { runOffseasonSim, ensureTopRosters } from '../engine/world_sim.js';
 
 const SAVE_KEY = 'wfl_save_v1';
 const DATE_FORMAT = (year, week) => {
@@ -122,9 +123,16 @@ export const game = {
       ],
       offers: [],
       pendingDecision: null,
+      pendingTransfer: null,
       flags: {},
       social: initSocialState(player)
     };
+
+    // 톱 클럽 로스터 즉시 생성 (세계 랭킹/라이벌용)
+    ensureTopRosters(world);
+    // 초기 세계 랭킹/라이벌 생성
+    runOffseasonSim(this.state);
+
     return this.state;
   },
 
@@ -269,6 +277,10 @@ export const game = {
     // 시즌 종료 개인상 평가 (발롱도르, 골든부트, 푸스카스 등 모두)
     const seasonAwards = evaluateSeasonAwards(s, seasonReport);
     seasonReport.awards = seasonAwards;
+
+    // 세계 시뮬: NPC 노화/은퇴/성장, 시즌 어워드, 빅딜, 랭킹, 라이벌
+    const offseason = runOffseasonSim(s);
+    seasonReport.offseason = offseason;
 
     // 이적 오퍼는 이적시장(여름/겨울)에 분산 도착함 — 시즌 종료 시 자동 생성 안 함
     // 기존 미수락 오퍼는 유지 (계속 협상 가능)

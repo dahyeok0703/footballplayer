@@ -425,6 +425,8 @@ function renderPlayer() {
           <tbody>${p.history.map(h => `<tr><td>${h.season}</td><td>${h.age}</td><td>${h.club}</td><td>${h.leagueName}</td><td class="num">${h.rank}</td><td class="num">${h.matches}</td><td class="num">${h.goals}</td><td class="num">${h.assists}</td><td class="num">${(+h.avgRating).toFixed(2)}</td><td class="num">${h.ovrEnd}</td></tr>`).join('')}</tbody></table>`}
       </div>
 
+      ${renderRivalsSection()}
+
       <div class="card wide">
         <h4>은퇴</h4>
         <p class="hint">은퇴는 당신이 직접 결정합니다. 나이는 자동 강제 은퇴 없음.</p>
@@ -1838,4 +1840,149 @@ function showNegotiateModal(offerId, callback) {
   document.getElementById('neg-cancel').onclick = () => {
     document.body.removeChild(overlay);
   };
+}
+
+/* ============================================================
+ *  세계 뷰 확장 — 랭킹 / 시즌 어워드 / 빅딜 뉴스 / 발롱도르 NPC
+ * ============================================================ */
+VIEWS.world = function renderWorldV2() {
+  const s = game.state;
+  const w = s.world || {};
+  const rankings = w.rankings || { overall: [], prospects: [] };
+  const bigDeals = w.bigDeals || [];
+  const bdWinners = w.ballonDorWinners || [];
+  const seasonAwards = w.seasonAwards || {};
+  const lastSeasonAwards = seasonAwards[s.year - 1] || null;
+
+  const byConf = {};
+  LEAGUES.forEach(l => { byConf[l.conf] = byConf[l.conf] || []; byConf[l.conf].push(l); });
+
+  main().innerHTML = `
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>🌍 세계 톱 50 선수 (OVR)</h3>
+        <div style="max-height:500px; overflow-y:auto;">
+          ${rankings.overall.slice(0, 50).map((p, i) => `
+            <div style="display:grid; grid-template-columns:30px 1fr 50px; gap:6px; padding:5px 8px; background:${i < 3 ? 'rgba(255,215,0,0.08)' : 'var(--bg-2)'}; border-radius:4px; margin-bottom:3px; font-size:0.85rem;">
+              <span style="color:${i < 3 ? 'var(--gold)' : 'var(--muted)'}; font-weight:bold;">${i + 1}</span>
+              <span><strong>${escapeHtml(p.name)}</strong> <small class="text-muted">${p.age}세 ${p.position} · ${escapeHtml(p.clubName)}</small></span>
+              <span style="text-align:right; color:var(--accent); font-weight:bold;">${p.ovr}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>🌱 세계 유망주 톱 30 (잠재력)</h3>
+        <div style="max-height:500px; overflow-y:auto;">
+          ${rankings.prospects.slice(0, 30).map((p, i) => `
+            <div style="display:grid; grid-template-columns:30px 1fr 50px; gap:6px; padding:5px 8px; background:var(--bg-2); border-radius:4px; margin-bottom:3px; font-size:0.85rem;">
+              <span class="text-muted">${i + 1}</span>
+              <span><strong>${escapeHtml(p.name)}</strong> <small class="text-muted">${p.age}세 ${p.position} · ${escapeHtml(p.clubName)}</small></span>
+              <span style="text-align:right; color:var(--accent-3); font-weight:bold;">${p.potential}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+
+      <div class="card wide">
+        <h3>📰 이적시장 빅딜 (월드 뉴스, 최근 ${bigDeals.length}건)</h3>
+        <div style="max-height:300px; overflow-y:auto;">
+          ${bigDeals.length === 0 ? '<p class="hint">아직 빅딜 없음 (시즌 종료 후 생성됨)</p>' :
+            bigDeals.slice(0, 30).map(d => `
+              <div style="padding:8px; background:var(--bg-2); border-radius:6px; margin-bottom:5px; font-size:0.85rem;">
+                <strong>📢 [${d.year}]</strong> ${escapeHtml(d.headline)}
+              </div>
+            `).join('')}
+        </div>
+      </div>
+
+      ${bdWinners.length > 0 ? `
+        <div class="card wide">
+          <h3>🏅 역대 발롱도르 (NPC 시뮬)</h3>
+          <table class="table">
+            <thead><tr><th>연도</th><th>수상자</th><th>클럽</th><th>OVR</th></tr></thead>
+            <tbody>
+              ${bdWinners.slice().reverse().map(b => `
+                <tr><td>${b.year}</td><td>${escapeHtml(b.name)}</td><td>${escapeHtml(b.clubName)}</td><td>${b.ovr}</td></tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
+
+      ${lastSeasonAwards ? `
+        <div class="card wide">
+          <h3>📊 직전 시즌 (${s.year - 1}) 리그별 어워드</h3>
+          <div style="max-height:400px; overflow-y:auto;">
+            ${Object.entries(lastSeasonAwards).slice(0, 12).map(([leagueId, a]) => {
+              const l = getLeague(leagueId);
+              if (!l || l.strength < 70) return '';
+              return `
+                <h4>${escapeHtml(l.name)} <small class="text-muted">${l.country}</small></h4>
+                <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; margin-bottom:10px; font-size:0.82rem;">
+                  <div>
+                    <strong style="color:var(--accent);">⚽ 득점왕</strong>
+                    ${(a.topScorers || []).slice(0, 3).map((p, i) => `<p>${i+1}. ${escapeHtml(p.name)} (${p.goals}골)</p>`).join('')}
+                  </div>
+                  <div>
+                    <strong style="color:var(--accent-3);">🅰 도움왕</strong>
+                    ${(a.topAssists || []).slice(0, 3).map((p, i) => `<p>${i+1}. ${escapeHtml(p.name)} (${p.assists}A)</p>`).join('')}
+                  </div>
+                  <div>
+                    <strong style="color:var(--accent-2);">⭐ 평점왕</strong>
+                    ${(a.topRatings || []).slice(0, 3).map((p, i) => `<p>${i+1}. ${escapeHtml(p.name)} (${p.rating})</p>`).join('')}
+                  </div>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      ` : ''}
+
+      <div class="card wide">
+        <h3>🗺 세계 축구 지도 (${LEAGUES.length}개 리그)</h3>
+        ${Object.entries(byConf).map(([conf, leagues]) => `
+          <h4>${CONFEDERATIONS[conf].name} — ${CONFEDERATIONS[conf].region} (${leagues.length}개)</h4>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:6px; margin-bottom:14px;">
+            ${leagues.map(l => `
+              <div style="background:var(--bg-2); padding:8px; border-radius:6px; font-size:0.84rem;">
+                <strong>${escapeHtml(l.name)}</strong>
+                <div class="text-muted" style="font-size:0.78rem;">${l.country} · ${l.tier}부 · 강도 ${l.strength}</div>
+              </div>
+            `).join('')}
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+};
+
+/* ---------- 내 선수 뷰에 라이벌 섹션 추가 (필요시 호출) ---------- */
+export function renderRivalsSection() {
+  const s = game.state;
+  const rivals = (s.world && s.world.rivals) || [];
+  if (rivals.length === 0) return '';
+  return `
+    <div class="card wide">
+      <h3>⚔️ 같은 포지션 라이벌 / 경쟁자 (톱 10)</h3>
+      <p class="hint">발롱도르 / 베스트 XI / 시상식에서 경쟁할 동시대 톱 선수들.</p>
+      <table class="table">
+        <thead><tr><th>#</th><th>이름</th><th>나이</th><th>포지션</th><th>클럽</th><th>리그</th><th class="num">OVR</th></tr></thead>
+        <tbody>
+          ${rivals.map((r, i) => `
+            <tr>
+              <td>${i + 1}</td>
+              <td><strong>${escapeHtml(r.name)}</strong></td>
+              <td>${r.age}</td>
+              <td>${r.position}</td>
+              <td>${escapeHtml(r.clubName)}</td>
+              <td>${escapeHtml(r.leagueName || '')}</td>
+              <td class="num"><strong>${r.ovr}</strong></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
