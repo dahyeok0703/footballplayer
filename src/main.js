@@ -68,6 +68,11 @@ async function processEvents(events) {
       await processTournamentCallup(ev);
     } else if (ev.type === 'transfer_offer_arrival') {
       processOfferArrival(ev);
+    } else if (ev.type === 'transfer_completed') {
+      const o = ev.offer;
+      game.log_(`✈️ ${o.clubName} 합류 완료! 새 클럽에서 출발.`, 'event');
+      alert(`✈️ ${o.clubName} 합류!\n주급: ${o.wage}만 € · 계약 ${o.years}년`);
+      refreshAndRender();
     } else if (ev.type === 'season_end') {
       await processSeasonEnd();
     } else if (ev.type === 'break') {

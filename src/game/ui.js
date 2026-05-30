@@ -1635,3 +1635,207 @@ export function showPostMatchSummary(fixture, result, matchState, callback) {
     callback();
   };
 }
+
+/* ============================================================
+ *  강화된 이적 시장 뷰 (모든 디테일 + 협상 + 사전계약)
+ * ============================================================ */
+VIEWS.transfers = function renderTransfersV2() {
+  const s = game.state;
+  const pending = s.pendingTransfer;
+  const offers = (s.offers || []).filter(o => !o.withdrawn);
+  const withdrawn = (s.offers || []).filter(o => o.withdrawn);
+
+  let html = '';
+
+  // 사전 계약 배너
+  if (pending) {
+    const jd = pending.joinDate;
+    html += `
+      <div class="card" style="border:2px solid var(--accent); margin-bottom:14px;">
+        <h3>✈️ 사전 계약 완료 — 합류 대기 중</h3>
+        <p style="font-size:1.1rem;">
+          <strong>${escapeHtml(pending.offer.clubName)}</strong> (${escapeHtml(pending.offer.leagueName)})
+        </p>
+        <p>합류 예정일: <strong class="text-warn">${jd.year}년 ${jd.month}월 ${jd.day}일</strong></p>
+        <p class="hint">합류일까지 현 소속팀에서 활약. 새 오퍼는 받지 않음.</p>
+      </div>
+    `;
+  }
+
+  if (offers.length === 0 && withdrawn.length === 0 && !pending) {
+    html += `
+      <div class="card">
+        <h3>이적 시장</h3>
+        <p class="hint">현재 들어온 이적 제안이 없습니다.</p>
+        <p>이적시장 윈도우(여름 6/15-8/31, 겨울 1월)에 활약에 따라 다양한 오퍼가 도착합니다.</p>
+      </div>
+    `;
+    main().innerHTML = html;
+    return;
+  }
+
+  html += `<div class="card"><h3>📨 이적 오퍼 (${offers.length}건)</h3>
+    <p class="hint">각 오퍼는 디테일, 협상, 합류 시점 모두 다릅니다. 신중히 결정하세요.</p>`;
+
+  offers.forEach(o => {
+    const today = s.calendar;
+    const jd = o.joinDate;
+    const isDelayed = jd && (jd.year !== today.year || jd.month !== today.month || jd.day !== today.day);
+    const rivalBadge = o.isRival ? '<span style="background:var(--danger); color:white; padding:2px 6px; border-radius:3px; font-size:0.72rem;">🔥 라이벌</span>' : '';
+
+    html += `
+      <div class="offer-card" style="border-left:4px solid ${o.isRival ? 'var(--danger)' : 'var(--accent)'};">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px;">
+          <div>
+            <strong style="font-size:1.05rem;">${escapeHtml(o.clubName)}</strong> ${rivalBadge}
+            <div class="text-muted" style="font-size:0.83rem;">${escapeHtml(o.leagueName)} · 강도 ${o.leagueStrength}</div>
+          </div>
+          <div style="text-align:right;">
+            <span class="badge cont">${escapeHtml(o.roleLabel)}</span>
+            <div class="hint" style="margin-top:4px;">관심도</div>
+            <div style="width:80px; height:6px; background:var(--bg-2); border-radius:3px; overflow:hidden;">
+              <div style="width:${o.interestLevel || 50}%; height:100%; background:var(--accent-2);"></div>
+            </div>
+          </div>
+        </div>
+
+        <p style="font-size:0.84rem; margin-top:6px; color:var(--accent-3);">${escapeHtml(o.roleDescription)} · 출전 보장 ${o.playingTimeGuarantee || '?'}분</p>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-top:10px; font-size:0.86rem;">
+          <p>💰 이적료: <strong>${o.freeTransfer ? '자유 계약' : o.fee.toLocaleString() + '만 €'}</strong></p>
+          <p>💵 주급: <strong>${o.wage.toLocaleString()}만 €</strong></p>
+          <p>📋 계약: <strong>${o.years}년${o.isLoan ? ' 임대' : ''}</strong></p>
+          <p>🎁 사이닝: <strong>${(o.signOn || 0).toLocaleString()}만 €</strong></p>
+          ${o.buyoutClause ? `<p>💎 바이아웃: <strong>${o.buyoutClause.toLocaleString()}만 €</strong></p>` : '<p>💎 바이아웃: <strong class="text-muted">없음</strong></p>'}
+          <p>📅 합류일: <strong>${isDelayed ? `${jd.year}/${jd.month}/${jd.day}` : '즉시'}</strong></p>
+        </div>
+
+        <h4 style="margin-top:10px;">💼 보너스</h4>
+        <p style="font-size:0.82rem;">골당 ${o.bonusGoals}만 € · 출전당 ${o.bonusAppearances}만 € · 우승시 ${o.bonusTrophy}만 €</p>
+
+        <h4 style="margin-top:10px;">🎯 감독 계획</h4>
+        <p style="font-size:0.86rem;">${escapeHtml(o.threeYearPlan)}</p>
+        ${o.captainPath ? `<p style="font-size:0.86rem; color:var(--accent-2);">👑 ${escapeHtml(o.captainPath)}</p>` : ''}
+
+        <h4 style="margin-top:10px;">📊 클럽 전망</h4>
+        <p style="font-size:0.86rem;">⚡ UCL/대륙간 우승 가능성 <strong>${o.uclChance || 0}%</strong> · 리그 예상 <strong>${o.expectedFinish}위</strong></p>
+
+        ${o.pros && o.pros.length > 0 ? `
+          <h4 style="margin-top:10px;">✅ 장점</h4>
+          ${o.pros.map(p => `<p style="font-size:0.82rem; color:var(--accent);">${escapeHtml(p)}</p>`).join('')}
+        ` : ''}
+        ${o.risks && o.risks.length > 0 ? `
+          <h4 style="margin-top:10px;">⚠️ 리스크</h4>
+          ${o.risks.map(r => `<p style="font-size:0.82rem; color:var(--danger);">${escapeHtml(r)}</p>`).join('')}
+        ` : ''}
+
+        <h4 style="margin-top:10px;">👥 팬 반응</h4>
+        <p style="font-size:0.83rem;">📍 현 소속팀: ${escapeHtml(o.currentClubFanReaction)}</p>
+        <p style="font-size:0.83rem;">🆕 ${escapeHtml(o.clubName)} 팬: ${escapeHtml(o.newClubFanReaction)}</p>
+
+        <h4 style="margin-top:10px;">📰 언론</h4>
+        <p style="font-size:0.83rem; font-style:italic;">${escapeHtml(o.pressCoverage)}</p>
+
+        <h4 style="margin-top:10px;">💡 영입 사유</h4>
+        <p style="font-size:0.82rem; color:var(--muted);">${escapeHtml(o.reason)}</p>
+
+        ${pending ? '<p class="hint" style="margin-top:10px;">⏸ 이미 사전 계약 진행 중. 새 오퍼 수락 불가.</p>' : `
+        <div class="actions" style="margin-top:12px; flex-wrap:wrap;">
+          <button class="primary" data-accept-v2="${o.id}">✅ 수락 ${isDelayed ? '(합류 대기)' : '(즉시)'}</button>
+          <button data-negotiate="${o.id}" ${o.negotiationRound >= 3 ? 'disabled' : ''}>🤝 협상 (${o.negotiationRound}/3)</button>
+          <button data-reject-v2="${o.id}" class="danger">❌ 거절</button>
+        </div>
+        `}
+      </div>
+    `;
+  });
+
+  if (withdrawn.length > 0) {
+    html += `<h4 style="margin-top:14px;">🚫 철회된 오퍼</h4>`;
+    withdrawn.forEach(o => {
+      html += `<p class="text-muted" style="font-size:0.82rem;">${escapeHtml(o.clubName)} — 협상 결렬</p>`;
+    });
+  }
+
+  if (offers.length > 0 && !pending) {
+    html += `<button id="btn-reject-all-v2" style="margin-top:14px;" class="danger">전체 거절 (잔류)</button>`;
+  }
+
+  html += `</div>`;
+  main().innerHTML = html;
+
+  // 핸들러
+  document.querySelectorAll('[data-accept-v2]').forEach(b => {
+    b.onclick = () => {
+      const id = b.dataset.acceptV2;
+      const r = game.acceptOffer(id);
+      if (r) {
+        if (r.joinedImmediately) {
+          game.log_(`✍️ ${r.clubName} 이적 완료 (즉시 합류, 주급 ${r.wage}만 €)`, 'good');
+        } else {
+          const jd = r.joinDate;
+          game.log_(`✍️ ${r.clubName}과 사전 계약 — ${jd.year}/${jd.month}/${jd.day} 합류 예정`, 'good');
+        }
+        refreshStatus();
+        renderView('hub');
+      }
+    };
+  });
+  document.querySelectorAll('[data-reject-v2]').forEach(b => {
+    b.onclick = () => {
+      const id = b.dataset.rejectV2;
+      s.offers = s.offers.filter(o => o.id !== id);
+      renderView('transfers');
+    };
+  });
+  document.querySelectorAll('[data-negotiate]').forEach(b => {
+    b.onclick = () => {
+      const id = b.dataset.negotiate;
+      showNegotiateModal(id, () => renderView('transfers'));
+    };
+  });
+  const rejectAll = document.getElementById('btn-reject-all-v2');
+  if (rejectAll) rejectAll.onclick = () => {
+    s.offers = [];
+    renderView('hub');
+  };
+};
+
+function showNegotiateModal(offerId, callback) {
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:520px;">
+      <h3>🤝 협상</h3>
+      <p class="hint">에이전트를 통해 조건 개선을 요구합니다. 거듭된 협상은 클럽 측 인내를 시험합니다 — 최대 3회.</p>
+      <div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">
+        <button class="decision-choice" data-demand="wage_up" style="text-align:left; padding:10px 14px;">💰 주급 20% 인상 요구</button>
+        <button class="decision-choice" data-demand="contract_extend" style="text-align:left; padding:10px 14px;">📋 계약 1년 추가 요구</button>
+        <button class="decision-choice" data-demand="buyout_add" style="text-align:left; padding:10px 14px;">💎 바이아웃 조항 추가/상향</button>
+        <button class="decision-choice" data-demand="playing_time" style="text-align:left; padding:10px 14px;">⚽ 출전 시간 보장 +500분</button>
+        <button class="decision-choice" data-demand="captain" style="text-align:left; padding:10px 14px;">👑 주장단 합류 약속</button>
+      </div>
+      <div class="actions" style="margin-top:14px;">
+        <button id="neg-cancel">취소</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelectorAll('[data-demand]').forEach(btn => {
+    btn.onclick = () => {
+      const demand = btn.dataset.demand;
+      const result = game.negotiateOffer(offerId, demand);
+      document.body.removeChild(overlay);
+      if (result.error) {
+        alert(result.error === 'too_many_rounds' ? '협상 횟수 초과' : '오퍼 없음');
+      } else {
+        game.log_(result.log, result.success ? 'good' : 'bad');
+        if (result.withdrawn) game.log_(`⚠️ 오퍼 철회됨`, 'bad');
+      }
+      callback();
+    };
+  });
+  document.getElementById('neg-cancel').onclick = () => {
+    document.body.removeChild(overlay);
+  };
+}

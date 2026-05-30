@@ -140,6 +140,16 @@ export const game = {
         return { events: [{ type: 'season_end' }], daysAdvanced, currentDate: { ...s.calendar } };
       }
 
+      // 사전 계약된 이적 합류일 도달 체크
+      const transferred = this._checkPendingTransfer();
+      if (transferred) {
+        return {
+          events: [{ type: 'transfer_completed', offer: transferred }],
+          daysAdvanced,
+          currentDate: { ...s.calendar }
+        };
+      }
+
       // 오늘 이벤트 수집
       const todayEvents = collectTodayEvents(s);
       if (todayEvents.length > 0) {
@@ -321,13 +331,94 @@ export const game = {
     };
   },
 
+  /* ---------- 오퍼 수락 — 합류는 joinDate에 지연 실행 ---------- */
   acceptOffer(offerId) {
     const s = this.state;
     const offer = s.offers.find(o => o.id === offerId);
     if (!offer) return false;
+
+    // 합류 일정이 오늘 이전이면 즉시 합류, 이후면 사전 계약 대기
+    const today = s.calendar;
+    const joinDate = offer.joinDate || today;
+    const isImmediate = compareDate(joinDate, today) <= 0;
+
+    if (isImmediate) {
+      // 즉시 합류
+      this._executeTransfer(offer);
+      s.offers = s.offers.filter(o => o.id !== offerId);
+      return { ...offer, joinedImmediately: true };
+    } else {
+      // 사전 계약: pendingTransfer로 저장, 다른 모든 오퍼 제거
+      s.pendingTransfer = { offer, joinDate };
+      // 사이닝 보너스 즉시 지급
+      s.player.money += offer.signOn || 0;
+      s.offers = []; // 다른 오퍼 모두 거절 (이미 계약 합의)
+      return { ...offer, joinedImmediately: false };
+    }
+  },
+
+  /* ---------- 협상 (주급/계약기간/바이아웃/출전보장/주장단) ---------- */
+  negotiateOffer(offerId, demand) {
+    const s = this.state;
+    const offer = s.offers.find(o => o.id === offerId);
+    if (!offer || offer.withdrawn) return { error: 'no_offer' };
+    if (offer.negotiationRound >= 3) return { error: 'too_many_rounds' };
+    offer.negotiationRound++;
+
+    const round = offer.negotiationRound;
+    // 성공 확률: round 1 = 70%, 2 = 50%, 3 = 30%
+    const successProb = 0.85 - (round - 1) * 0.2 - (offer.interestLevel < 60 ? 0.15 : 0);
+
+    let log = '';
+    let success = false;
+
+    if (Math.random() < successProb) {
+      success = true;
+      switch (demand) {
+        case 'wage_up':
+          const oldWage = offer.wage;
+          offer.wage = Math.round(offer.wage * 1.20);
+          log = `✅ 주급 인상 합의: ${oldWage}만 € → ${offer.wage}만 € (+20%)`;
+          break;
+        case 'contract_extend':
+          offer.years++;
+          log = `✅ 계약 1년 연장: ${offer.years}년 계약`;
+          break;
+        case 'buyout_add':
+          if (!offer.buyoutClause) offer.buyoutClause = Math.round(offer.fee * 2);
+          else offer.buyoutClause = Math.round(offer.buyoutClause * 1.3);
+          log = `✅ 바이아웃 추가/상향: ${offer.buyoutClause.toLocaleString()}만 €`;
+          break;
+        case 'playing_time':
+          offer.playingTimeGuarantee = (offer.playingTimeGuarantee || 1500) + 500;
+          log = `✅ 출전 시간 보장 강화: 최소 ${offer.playingTimeGuarantee}분`;
+          break;
+        case 'captain':
+          offer.captainPath = '주장단 합류 약속';
+          log = `✅ 주장단 합류 약속 받음`;
+          break;
+        default:
+          log = '✅ 조건 합의';
+      }
+    } else {
+      // 실패 - 라운드가 깊을수록 철회 위험
+      if (round >= 3 || (round === 2 && Math.random() < 0.3)) {
+        offer.withdrawn = true;
+        log = `❌ ${offer.clubName} 측 \"이 정도 조건이면 다른 영입을 검토할 수밖에 없다\" — 오퍼 철회.`;
+      } else {
+        log = `❌ ${offer.clubName} 측 거절. 추가 협상 가능하지만 위험.`;
+      }
+    }
+    return { success, log, withdrawn: !!offer.withdrawn };
+  },
+
+  /* ---------- 실제 클럽 이적 실행 (내부) ---------- */
+  _executeTransfer(offer) {
+    const s = this.state;
     const newLeague = getLeague(offer.leagueId);
     const newClubs = s.world.clubs[offer.leagueId];
     const newClub = newClubs.find(c => c.id === offer.clubId);
+    if (!newClub) return false;
 
     s.player.clubId = newClub.id;
     s.player.clubName = newClub.name;
@@ -336,19 +427,31 @@ export const game = {
     s.player.country = newLeague.country;
     s.player.salary = offer.wage;
     s.player.contractYears = offer.years;
-    s.player.money += Math.round(offer.fee * 0.1); // 사이닝 보너스
+    s.player.money += Math.round(offer.signOn || 0);
 
-    // 새 일정 재생성 (시즌 시작일 기준)
-    // 이적 후 첫 시즌엔 작년 새 클럽 순위 모름 — 강도로 추정
+    // 새 일정 재생성
     const estRank = Math.max(1, Math.round((100 - newClub.strength) / 4));
     const newCupId = getContinentalForRank(offer.leagueId, estRank);
     const continentalOpps = newCupId ? selectContinentalOpponents(newClub, s.world.clubs, newLeague.conf, newCupId) : null;
     const seasonStart = s.calendar || { year: s.year, month: 8, day: 1 };
     const fixtures = generateSeasonFixtures(s.player, newClubs, continentalOpps, seasonStart);
     s.season = makeSeasonState(s.player, newClubs, fixtures);
+    return true;
+  },
 
-    s.offers = [];
-    return offer;
+  /* ---------- 대기 중 사전 계약 체크 (매일 advance에서 호출) ---------- */
+  _checkPendingTransfer() {
+    const s = this.state;
+    if (!s.pendingTransfer) return null;
+    const today = s.calendar;
+    if (compareDate(today, s.pendingTransfer.joinDate) >= 0) {
+      // 합류 시점 도달!
+      const offer = s.pendingTransfer.offer;
+      s.pendingTransfer = null;
+      const ok = this._executeTransfer(offer);
+      return ok ? offer : null;
+    }
+    return null;
   },
 
   retire() {
