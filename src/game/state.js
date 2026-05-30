@@ -39,7 +39,7 @@ export const game = {
 
   /* ---------- 새 커리어 시작 ---------- */
   newCareer(opts) {
-    const { name, nationality, foot, position, talent, height = 178, weight = 72, weakFoot = 3, skillMoves = 3, startLeagueId: userLeagueId, startClubId: userClubId, preGeneratedClubs } = opts;
+    const { name, nationality, foot, position, talent, startOvr = 50, height = 178, weight = 72, weakFoot = 3, skillMoves = 3, startLeagueId: userLeagueId, startClubId: userClubId, preGeneratedClubs } = opts;
 
     // 모든 리그 클럽 생성 (사용자가 미리 본 클럽은 재사용)
     const world = { clubs: {}, leagueTables: {}, leagueChampions: {}, tournaments: {} };
@@ -69,14 +69,23 @@ export const game = {
     }
     generateClubRoster(startClub);
 
-    // 초기 능력치
+    // 초기 능력치 — 사용자 선택 시작 OVR에 맞춰 스케일
     const stats = {};
+    const baseStat = startOvr - 12; // 시작 OVR 50이면 baseStat=38, 그 위주로 분포
     Object.keys({ speed: 1, shooting: 1, passing: 1, dribbling: 1, defending: 1, physical: 1, mental: 1, reflex: 1, handling: 1, positioning: 1, kicking: 1 }).forEach(k => {
-      stats[k] = rand(35, 50);
+      stats[k] = clamp(baseStat + rand(0, 10), 25, 90);
     });
-    POSITION_STATS[groupOf(position)].forEach(k => stats[k] += rand(5, 12));
+    POSITION_STATS[groupOf(position)].forEach(k => {
+      stats[k] = clamp(stats[k] + rand(5, 12), 30, 95);
+    });
 
-    const potential = clamp(60 + talent * 6 + rand(-3, 5), 55, 99);
+    // 잠재력: ★1 ~ ★6 까지. ★6는 잠재력 95~99 (메시급)
+    let potential;
+    if (talent >= 6) {
+      potential = clamp(95 + rand(0, 4), 95, 99);  // ★6: 95~99
+    } else {
+      potential = clamp(60 + talent * 6 + rand(-3, 5), 55, 95);  // ★1~★5: 65~92
+    }
 
     const player = {
       id: 'me',

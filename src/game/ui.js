@@ -78,13 +78,18 @@ export function renderStart() {
           ${POSITIONS.map(p => `<option value="${p.id}"${p.id === 'CAM' ? ' selected' : ''}>${p.name} (${p.short})</option>`).join('')}
         </select>
       </label>
+      <label>시작 OVR (16세 데뷔 능력치)
+        <input type="number" id="in-start-ovr" min="40" max="72" value="50">
+        <small class="hint" style="margin-top:2px; display:block;">40 = 평범한 유스 · 50 = 정상 · 60 = 좋은 유망주 · 65 = 엘리트 · 70+ = 야말급 슈퍼 유망주</small>
+      </label>
       <label>재능 (직접 선택)
         <select id="in-talent">
-          <option value="1">★☆☆☆☆ (1) — 평범한 재능 / 잠재력 ~70</option>
-          <option value="2">★★☆☆☆ (2) — 나쁘지 않은 재능 / 잠재력 ~75</option>
-          <option value="3" selected>★★★☆☆ (3) — 평균 재능 / 잠재력 ~80</option>
-          <option value="4">★★★★☆ (4) — 우수한 재능 / 잠재력 ~85</option>
-          <option value="5">★★★★★ (5) — 세계적 재능 / 잠재력 ~92</option>
+          <option value="1">★☆☆☆☆☆ (1) — 평범한 재능 / 잠재력 ~70</option>
+          <option value="2">★★☆☆☆☆ (2) — 나쁘지 않은 재능 / 잠재력 ~76</option>
+          <option value="3" selected>★★★☆☆☆ (3) — 평균 재능 / 잠재력 ~82</option>
+          <option value="4">★★★★☆☆ (4) — 우수한 재능 / 잠재력 ~87</option>
+          <option value="5">★★★★★☆ (5) — 세계적 재능 / 잠재력 ~92</option>
+          <option value="6">★★★★★★ (6) — 한 세대에 한 명 / 잠재력 95~99 (메시/호날두급)</option>
         </select>
       </label>
 
@@ -139,6 +144,7 @@ export function renderStart() {
     const weakFoot = parseInt($('in-weakfoot').value) || 3;
     const skillMoves = parseInt($('in-skill-moves').value) || 3;
     const talent = parseInt($('in-talent').value) || 3;
+    const startOvr = Math.max(40, Math.min(72, parseInt($('in-start-ovr').value) || 50));
     const startLeagueId = $('in-league').value;
     const startClubId = $('in-club').value;
     game.newCareer({
@@ -146,7 +152,7 @@ export function renderStart() {
       nationality: $('in-nation').value,
       foot: $('in-foot').value,
       position: $('in-pos').value,
-      talent,
+      talent, startOvr,
       height, weight, weakFoot, skillMoves,
       startLeagueId, startClubId,
       preGeneratedClubs: charCreate.clubsByLeague

@@ -82,33 +82,30 @@ export function generatePlayer(opts = {}) {
   const pos = position || pick(POSITION_DIST);
   const playerAge = age !== null ? age : (isYouth ? rand(16, 19) : Math.round(clamp(gauss(26, 4), 17, 38)));
 
-  // OVR: 정규분포 + 극단값 강한 제한 (99/98은 매우 드물게)
+  // OVR: 95+ 극도로 희귀, 99는 사실상 메시급 1명
   const center = (minOvr + maxOvr) / 2;
   const sd = (maxOvr - minOvr) / 5;
   let ovr;
   for (let attempt = 0; attempt < 30; attempt++) {
     ovr = Math.round(gauss(center, sd));
-    if (ovr >= 99 && Math.random() > 0.004) continue; // 99: 0.4% 통과
-    if (ovr >= 97 && Math.random() > 0.03) continue;  // 97-98: 3%
-    if (ovr >= 95 && Math.random() > 0.10) continue;  // 95-96: 10%
-    if (ovr >= 92 && Math.random() > 0.35) continue;  // 92-94: 35%
+    if (ovr >= 99 && Math.random() > 0.0008) continue; // 99: 0.08% (전 세계 1-2명)
+    if (ovr >= 98 && Math.random() > 0.005) continue;  // 98: 0.5%
+    if (ovr >= 97 && Math.random() > 0.015) continue;  // 97: 1.5%
+    if (ovr >= 96 && Math.random() > 0.05) continue;   // 96: 5%
+    if (ovr >= 95 && Math.random() > 0.12) continue;   // 95: 12% (사실상 천장)
+    if (ovr >= 93 && Math.random() > 0.40) continue;
     if (ovr >= minOvr && ovr <= maxOvr) break;
   }
   ovr = clamp(ovr, minOvr, maxOvr);
 
-  // 잠재력: 어린 선수만 잠재력↑. 극단값(99 잠재력)은 더 드물게 — 메시/호날두급.
+  // 잠재력: 99 잠재력은 매우 드물게 (한 시즌 0-2명)
   let potential;
-  if (playerAge < 20) {
-    potential = ovr + rand(2, 14);
-  } else if (playerAge < 23) {
-    potential = ovr + rand(1, 8);
-  } else {
-    potential = ovr + rand(0, 4);
-  }
-  // 잠재력 극단값 제한
-  if (potential >= 99 && Math.random() > 0.05) potential = 94 + rand(0, 4); // 99 잠재력은 5%
-  if (potential >= 97 && Math.random() > 0.20) potential = 92 + rand(0, 4); // 97-98 잠재력은 20%
-  if (potential >= 94 && Math.random() > 0.45) potential = 88 + rand(0, 5);
+  if (playerAge < 20)      potential = ovr + rand(2, 14);
+  else if (playerAge < 23) potential = ovr + rand(1, 8);
+  else                     potential = ovr + rand(0, 4);
+  if (potential >= 99 && Math.random() > 0.02) potential = 93 + rand(0, 4); // 99: 2%
+  if (potential >= 97 && Math.random() > 0.12) potential = 91 + rand(0, 4); // 97-98: 12%
+  if (potential >= 95 && Math.random() > 0.35) potential = 88 + rand(0, 5); // 95-96: 35%
   potential = clamp(potential, ovr, 99);
 
   return {
@@ -126,11 +123,12 @@ export function generatePlayer(opts = {}) {
 
 /* ---------- 클럽 강도별 OVR 천장 (빅클럽 독점) ---------- */
 export function maxOvrForClub(club) {
-  if (club.strength >= 95) return 99;
-  if (club.strength >= 90) return 95;
-  if (club.strength >= 85) return 91;
-  if (club.strength >= 80) return 87;
-  if (club.strength >= 73) return 83;
+  // 95+ 클럽도 대부분 95에서 막힘. 99는 전 세계 1-2명만.
+  if (club.strength >= 95) return 97;
+  if (club.strength >= 90) return 93;
+  if (club.strength >= 85) return 90;
+  if (club.strength >= 80) return 86;
+  if (club.strength >= 73) return 82;
   if (club.strength >= 65) return 78;
   if (club.strength >= 55) return 73;
   return 68;
@@ -138,12 +136,13 @@ export function maxOvrForClub(club) {
 
 /* ---------- 클럽 강도별 잠재력 천장 ---------- */
 export function maxPotentialForClub(club) {
-  if (club.strength >= 95) return 99;
-  if (club.strength >= 88) return 96;
-  if (club.strength >= 80) return 92;
-  if (club.strength >= 72) return 88;
-  if (club.strength >= 62) return 82;
-  return 78;
+  if (club.strength >= 95) return 99;  // 톱 빅클럽만 잠재력 99 보유 가능
+  if (club.strength >= 90) return 95;
+  if (club.strength >= 85) return 92;
+  if (club.strength >= 80) return 89;
+  if (club.strength >= 72) return 86;
+  if (club.strength >= 62) return 81;
+  return 77;
 }
 
 export function generateClubRoster(club) {
