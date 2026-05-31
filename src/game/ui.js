@@ -2191,3 +2191,102 @@ function renderBgLeagueTables(world, excludeLeagueId, year) {
     </div>
   `;
 }
+
+/* ============================================================
+ *  🏆 우승 / 트로피 축하 패널
+ *  - 매치 후 (조기 우승, 컵 결승 등)
+ *  - 시즌 종료 시 (리그 우승 등)
+ * ============================================================ */
+export function showChampionshipModal(info, callback) {
+  /*
+   * info = {
+   *   type: 'league' | 'cup' | 'continental' | 'national' | 'early_champion' | 'individual',
+   *   title: '🏆 ...',
+   *   trophyName: '...',
+   *   subtitle: '...',
+   *   stats: {...},
+   *   prestige: 0-100,
+   *   accent: 'gold'/'silver'/etc
+   * }
+   */
+  const accent = info.accent || 'gold';
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content championship-modal" style="max-width:560px; text-align:center; position:relative; overflow:hidden;
+      background: linear-gradient(135deg, var(--card) 0%, var(--card-2) 50%, var(--card) 100%);
+      border: 2px solid var(--${accent === 'gold' ? 'gold' : (accent === 'silver' ? 'silver' : 'danger')});
+      box-shadow: 0 0 40px rgba(255, 215, 0, 0.3);">
+      <div class="confetti"></div>
+      <div style="font-size:5rem; line-height:1; margin:10px 0; filter: drop-shadow(0 0 20px rgba(255,215,0,0.5));">${info.icon || '🏆'}</div>
+      <h2 style="color: var(--${accent === 'gold' ? 'gold' : 'silver'}); font-size:1.8rem; margin:4px 0;">${escapeHtml(info.title)}</h2>
+      <p style="font-size:1.2rem; margin:6px 0; color: var(--accent-2);"><strong>${escapeHtml(info.trophyName || '')}</strong></p>
+      ${info.subtitle ? `<p style="margin:10px 0; color:var(--muted); font-size:0.95rem;">${escapeHtml(info.subtitle)}</p>` : ''}
+      ${info.stats ? `
+        <div style="display:flex; justify-content:center; gap:18px; margin:14px 0; flex-wrap:wrap;">
+          ${Object.entries(info.stats).map(([k, v]) => `
+            <div style="background:var(--bg-2); padding:8px 14px; border-radius:8px;">
+              <div style="font-size:0.78rem; color:var(--muted);">${escapeHtml(k)}</div>
+              <div style="font-size:1.2rem; color:var(--accent); font-weight:bold;">${escapeHtml(String(v))}</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+      ${info.bodyHtml || ''}
+      <div class="actions" style="margin-top:18px;">
+        <button class="primary" id="champ-close" style="padding:10px 24px; font-size:1rem;">${info.closeLabel || '확인'}</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  // 컨페티 애니메이션 추가
+  spawnConfetti(overlay.querySelector('.confetti'));
+
+  document.getElementById('champ-close').onclick = () => {
+    document.body.removeChild(overlay);
+    callback && callback();
+  };
+}
+
+function spawnConfetti(container) {
+  if (!container) return;
+  const colors = ['#ffd700', '#00d97e', '#4cc9f0', '#f4c430', '#e63946', '#fff'];
+  for (let i = 0; i < 30; i++) {
+    const piece = document.createElement('div');
+    piece.style.cssText = `
+      position: absolute;
+      width: 8px; height: 8px;
+      background: ${colors[i % colors.length]};
+      left: ${Math.random() * 100}%;
+      top: -20px;
+      border-radius: 2px;
+      transform: rotate(${Math.random() * 360}deg);
+      animation: confettiFall ${2 + Math.random() * 2}s linear ${Math.random()}s infinite;
+      pointer-events: none;
+    `;
+    container.appendChild(piece);
+  }
+}
+
+/* 강등/탈락 통보 패널 (다른 톤) */
+export function showRelegationModal(info, callback) {
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:520px; text-align:center; border:2px solid var(--danger);">
+      <div style="font-size:4rem; line-height:1; margin:10px 0;">⬇️</div>
+      <h2 style="color: var(--danger); font-size:1.4rem; margin:4px 0;">${escapeHtml(info.title)}</h2>
+      <p style="margin:10px 0; color:var(--muted);">${escapeHtml(info.subtitle || '')}</p>
+      ${info.bodyHtml || ''}
+      <div class="actions" style="margin-top:14px;">
+        <button class="primary" id="releg-close">확인</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('releg-close').onclick = () => {
+    document.body.removeChild(overlay);
+    callback && callback();
+  };
+}

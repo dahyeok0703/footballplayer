@@ -4,13 +4,14 @@
 
 import { game, generateOneOffer } from './game/state.js';
 import { renderStart, renderView, refreshStatus, showGame, showMatchModal, showSeasonEndModal, renderEnd, getTrainAlloc, showDecisionModal, showTournamentCallupModal, showPreMatchChoice, showPreMatchHighlightModal, showHighlightModal, showHighlightResult, showPostMatchSummary } from './game/ui.js';
-import { simulateMatch, recordMatch, applyTraining, calcOVR, simulateBackgroundMatch, recordBackgroundMatch } from './engine/sim.js';
+import { simulateMatch, recordMatch, applyTraining, calcOVR, simulateBackgroundMatch, recordBackgroundMatch, checkEarlyClinch } from './engine/sim.js';
 import { applyPerMatchGrowth } from './engine/social.js';
 import { dateLabel, addDays } from './engine/calendar.js';
 import { getContinentalCup, getPrimaryCup, getDomesticCups } from './data/cups.js';
 import { uid, pick, rand, chance } from './engine/generator.js';
 import { selectHighlights, evaluateChoice, initMatchState, applyHighlightOutcome, finalizeMatch } from './engine/match.js';
 import { generateMatchNarrative, hasApiKey } from './engine/ai.js';
+import { showChampionshipModal, showRelegationModal } from './game/ui.js';
 
 let busy = false;
 
@@ -181,6 +182,77 @@ async function processFixture(fixture) {
 
   // 경기 후 종합 화면
   await new Promise(res => showPostMatchSummary(fixture, result, matchState, res));
+
+  // 컵/대륙간 결승 우승 시 축하 패널
+  if (s._pendingTrophy) {
+    const tp = s._pendingTrophy;
+    tp.stats = tp.stats || {};
+    tp.stats['최종 스코어'] = `${result.myGoals}-${result.oppGoals}`;
+    tp.stats['본인 평점'] = result.rating;
+    if (result.goals > 0) tp.stats['본인 골'] = result.goals;
+    s._pendingTrophy = null;
+    await new Promise(res => showChampionshipModal(tp, res));
+  }
+
+  // 리그 매치 후 조기 우승 / 강등 / 대륙간 진출 자동 확인
+  if (fixture.type === 'league') {
+    await checkAndShowEarlyClinch();
+  }
+}
+
+/* ---------- 매치 후 조기 우승/강등/대륙간 진출 체크 ---------- */
+async function checkAndShowEarlyClinch() {
+  const s = game.state;
+  const clinch = checkEarlyClinch(s);
+  if (!clinch) return;
+  if (clinch.type === 'early_champion') {
+    const myLeague = clinch.leagueName;
+    // 트로피 자동 추가
+    s.player.trophies.push({
+      season: s.year,
+      name: `${myLeague} 우승 (조기 확정)`,
+      type: 'league',
+      prestige: 80
+    });
+    game.log_(`🏆🏆🏆 ${myLeague} 조기 우승 확정! (${clinch.matchesRemaining}경기 남기고)`, 'event');
+    await new Promise(res => showChampionshipModal({
+      title: '🏆 조기 우승 확정!',
+      trophyName: `${myLeague} ${s.year - 1}-${s.year % 100}`,
+      subtitle: `${clinch.matchesRemaining}경기를 남기고 우승을 조기 확정짓다!`,
+      icon: '🏆',
+      accent: 'gold',
+      stats: {
+        '본인 승점': clinch.myPts,
+        '2위 격차': '+' + clinch.gap,
+        '잔여 경기': clinch.matchesRemaining
+      },
+      bodyHtml: `<p style="margin-top:14px; color:var(--accent);">⭐ ${escapeHtmlMain(clinch.secondTeam)}이 모든 경기를 이겨도 따라잡을 수 없습니다!</p>
+        <p class="hint">남은 경기는 부담 없이 즐기세요. 트로피는 이미 캐비닛에 ✨</p>`,
+      closeLabel: '🍾 축하 받기'
+    }, res));
+  } else if (clinch.type === 'early_relegation') {
+    game.log_(`⬇️ ${clinch.leagueName} 강등 조기 확정 — 다음 시즌 하부 리그`, 'bad');
+    await new Promise(res => showRelegationModal({
+      title: '⬇️ 강등 조기 확정',
+      subtitle: `${clinch.matchesRemaining}경기를 남기고 강등이 확정됐습니다.\n${clinch.safeTeam}이 모든 경기를 져도 따라잡을 수 없는 격차.`,
+      bodyHtml: `<p class="hint">남은 경기는 자존심 싸움. 다음 시즌 복귀를 노립시다.</p>`
+    }, res));
+  } else if (clinch.type === 'early_continental') {
+    game.log_(`✅ ${clinch.leagueName} ${clinch.rank}위 — 대륙간 진출권 조기 확정`, 'good');
+    await new Promise(res => showChampionshipModal({
+      title: '✅ 대륙간 진출권 확정',
+      trophyName: `${clinch.leagueName} ${clinch.rank}위 (확정)`,
+      subtitle: `${clinch.matchesRemaining}경기 남기고 다음 시즌 대륙간 클럽 대회 진출 확정!`,
+      icon: '🌍',
+      accent: 'silver',
+      stats: { '현재 순위': clinch.rank + '위', '잔여 경기': clinch.matchesRemaining },
+      closeLabel: '확인'
+    }, res));
+  }
+}
+
+function escapeHtmlMain(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
 /* ---------- 컵/대륙간 다음 라운드 동적 추가 ---------- */
@@ -229,6 +301,17 @@ function advanceCupRound(fixture) {
           prestige
         });
         game.log_(`🏆🏆🏆 ${fixture.competition} 우승!`, 'event');
+        // 우승 축하 패널 등록 (매치 후 processFixture에서 표시)
+        s._pendingTrophy = {
+          title: '🏆🏆🏆 우승!',
+          trophyName: fixture.competition,
+          subtitle: fixture.type === 'continental' ? '대륙간 클럽 대회 정상에 오르다!' : '자국 컵을 들어 올리다!',
+          icon: fixture.type === 'continental' ? '🌍' : '🏆',
+          accent: 'gold',
+          stats: {
+            '최종 스코어': `${fixture.myGoals || 0}-${fixture.oppGoals || 0}` // 실제 결과는 processFixture에서
+          }
+        };
       }
       return;
     }
@@ -369,11 +452,54 @@ async function processSeasonEnd() {
   const seasonResult = game.endSeason();
   if (seasonResult.report) {
     game.log_(`========== 시즌 ${seasonResult.report.season} 종료 ==========`, 'event');
-    if (seasonResult.cupResults && seasonResult.cupResults.length > 0) {
-      seasonResult.cupResults.forEach(c => game.log_(`🏆 ${c.name}!`, 'event'));
+
+    // 리그 우승 패널 (조기 확정 안 됐을 때)
+    const r = seasonResult.report;
+    if (r.rank === 1 && !game.state.player.earlyClinch?.[`s${r.season}`]?.champion) {
+      await new Promise(res => showChampionshipModal({
+        title: '🏆 리그 우승!',
+        trophyName: `${r.leagueName} ${r.season - 1}-${r.season % 100}`,
+        subtitle: `${r.matches}경기에서 1위로 시즌을 마쳤습니다!`,
+        icon: '🏆',
+        accent: 'gold',
+        stats: {
+          '본인 경기': r.matches,
+          '본인 골': r.goals,
+          '본인 어시': r.assists,
+          '평균 평점': r.avgRating.toFixed(2)
+        },
+        closeLabel: '🍾 축하 받기'
+      }, res));
     }
-    if (seasonResult.natTrophy) game.log_(`🥇 ${seasonResult.natTrophy.name}`, 'event');
-    if (seasonResult.ballonDor) game.log_(`🏅 발롱도르 수상!`, 'event');
+    // 시즌 우승한 트로피들 (컵/대륙간/국대)
+    if (seasonResult.cupResults && seasonResult.cupResults.length > 0) {
+      for (const c of seasonResult.cupResults) {
+        game.log_(`🏆 ${c.name}!`, 'event');
+      }
+    }
+    if (seasonResult.natTrophy) {
+      game.log_(`🥇 ${seasonResult.natTrophy.name}`, 'event');
+      await new Promise(res => showChampionshipModal({
+        title: '🥇 국가대표 우승!',
+        trophyName: seasonResult.natTrophy.name,
+        subtitle: '조국에 영광을 안기다',
+        icon: '🇰🇷',
+        accent: 'gold',
+        closeLabel: '대표팀 환영회로'
+      }, res));
+    }
+    if (seasonResult.ballonDor) {
+      game.log_(`🏅 발롱도르 수상!`, 'event');
+      await new Promise(res => showChampionshipModal({
+        title: '🏅 발롱도르!',
+        trophyName: `${r.season} 발롱도르 위너`,
+        subtitle: '세계 최고의 선수로 인정받다',
+        icon: '🏅',
+        accent: 'gold',
+        bodyHtml: '<p style="color:var(--accent-2); margin-top:14px;">⭐⭐⭐⭐⭐ 한 세대를 대표하는 선수가 되었습니다.</p>',
+        closeLabel: '시상식장으로'
+      }, res));
+    }
     if (seasonResult.promoted) game.log_(`⬆️ 본인 클럽 승격!`, 'good');
     if (seasonResult.relegated) game.log_(`⬇️ 본인 클럽 강등...`, 'bad');
     // 세계 승강 결과 요약 로그

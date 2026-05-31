@@ -3,7 +3,7 @@
  *  - 매치 시뮬, 시즌 진행, 성장/노화, 이적, 승강
  * ================================================================ */
 
-import { LEAGUES, getLeague, TROPHIES } from '../data/world.js';
+import { LEAGUES, getLeague, getSeasonMatchCount, TROPHIES } from '../data/world.js';
 import { rand, pick, clamp, chance, gauss, generateClubRoster, generatePlayer, generateLeagueClubs } from './generator.js';
 
 /* ---------- 서브 포지션 → 능력치 그룹 ---------- */
@@ -177,6 +177,92 @@ export function buildLeagueTable(clubs) {
 
 export function sortedTable(table) {
   return Object.values(table).sort((a, b) => b.pts - a.pts || (b.gf - b.ga) - (a.gf - a.ga) || b.gf - a.gf);
+}
+
+/* ---------- 조기 우승 / 조기 강등 감지 ----------
+ *  매 리그 매치 후 호출
+ *  - 우승: 1위인데 2위와 격차 > 남은 매치 × 3
+ *  - 강등: 강등권인데 안전권과 격차 > 남은 매치 × 3
+ *  - 챔스 진출 확정 / 강등권 탈출 확정도 가능 (생략)
+ */
+export function checkEarlyClinch(state) {
+  const myLeague = getLeague(state.player.leagueId);
+  if (!myLeague || !state.season || !state.season.leagueTable) return null;
+
+  const tableArr = sortedTable(state.season.leagueTable);
+  const myIdx = tableArr.findIndex(t => t.id === state.player.clubId);
+  if (myIdx < 0) return null;
+  const myTeam = tableArr[myIdx];
+
+  const totalMatches = getSeasonMatchCount(myLeague);
+  const matchesRemaining = Math.max(0, totalMatches - myTeam.played);
+
+  state.player.earlyClinch = state.player.earlyClinch || {};
+  const seasonKey = `s${state.year}`;
+  state.player.earlyClinch[seasonKey] = state.player.earlyClinch[seasonKey] || {};
+  const clinchState = state.player.earlyClinch[seasonKey];
+
+  // 우승 조기 확정
+  if (!clinchState.champion && myIdx === 0 && tableArr.length > 1 && matchesRemaining > 0) {
+    const second = tableArr[1];
+    const gap = myTeam.pts - second.pts;
+    if (gap > matchesRemaining * 3) {
+      clinchState.champion = true;
+      return {
+        type: 'early_champion',
+        leagueId: myLeague.id,
+        leagueName: myLeague.name,
+        gap, matchesRemaining,
+        myPts: myTeam.pts,
+        secondTeam: second.name,
+        secondPts: second.pts
+      };
+    }
+  }
+
+  // 강등 조기 확정
+  if (!clinchState.relegated && myLeague.relegatesTo) {
+    const relegationLine = tableArr.length - 4; // 안전권 마지막 인덱스
+    if (myIdx > relegationLine && relegationLine >= 0) {
+      const safeTeam = tableArr[relegationLine];
+      const gap = safeTeam.pts - myTeam.pts;
+      if (gap > matchesRemaining * 3 && matchesRemaining > 0) {
+        clinchState.relegated = true;
+        return {
+          type: 'early_relegation',
+          leagueId: myLeague.id,
+          leagueName: myLeague.name,
+          gap, matchesRemaining,
+          myPts: myTeam.pts,
+          safeTeam: safeTeam.name,
+          safePts: safeTeam.pts
+        };
+      }
+    }
+  }
+
+  // 대륙간 진출권 조기 확정 (UCL/UEL 자리)
+  if (!clinchState.continental && myLeague.continentalSpots > 0 && matchesRemaining > 0) {
+    const spotLine = myLeague.continentalSpots - 1; // 마지막 진출권 인덱스
+    if (myIdx <= spotLine) {
+      const nextOutsideSpot = tableArr[spotLine + 1];
+      if (nextOutsideSpot) {
+        const gap = myTeam.pts - nextOutsideSpot.pts;
+        if (gap > matchesRemaining * 3) {
+          clinchState.continental = true;
+          return {
+            type: 'early_continental',
+            leagueId: myLeague.id,
+            leagueName: myLeague.name,
+            rank: myIdx + 1,
+            gap, matchesRemaining
+          };
+        }
+      }
+    }
+  }
+
+  return null;
 }
 
 /* ---------- 시즌 종료 처리: 승강, 트로피, 보너스 ---------- */
