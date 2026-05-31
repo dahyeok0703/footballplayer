@@ -5,6 +5,7 @@
 import { LEAGUES, REAL_CLUBS, NAME_POOLS, POOL_BY_CODE, getLeague, getSeasonMatchCount } from '../data/world.js';
 import { addDays, getDayOfWeek } from './calendar.js';
 import { getPrimaryCup, getDomesticCups, getContinentalCup, getContinentalForRank, CONTINENTAL_CUPS, A_MATCH_DATES, getInternationalMatchType } from '../data/cups.js';
+import { CLUB_STRENGTH_OVERRIDES, REAL_SQUADS } from '../data/club_strengths.js';
 
 let _idCounter = 1;
 export function uid(prefix = 'id') { return `${prefix}_${_idCounter++}`; }
@@ -38,10 +39,19 @@ export function generateLeagueClubs(league) {
   const clubs = [];
   for (let i = 0; i < league.size; i++) {
     const name = realList && realList[i] ? realList[i] : makeProceduralClubName(league.code, i);
-    // 클럽 강도: 리그 평균 강도 + 정규분포(시드: 상위 5팀은 좀더 강함)
     const rank = i;
-    const eliteBoost = rank < 3 ? 10 : (rank < 6 ? 5 : 0);
-    const strength = clamp(Math.round(league.strength + eliteBoost + gauss(0, 6)), 25, 99);
+    // 세계 단위 강도: 수동 오버라이드 우선, 없으면 리그+순위 기반
+    let strength;
+    if (CLUB_STRENGTH_OVERRIDES[name] !== undefined) {
+      strength = CLUB_STRENGTH_OVERRIDES[name] + Math.round(gauss(0, 2));
+    } else {
+      // 절차적: 리그 강도 기반이되 변방 리그는 더 낮게
+      // 톱 3팀만 살짝 부스트, 나머지는 리그 평균 또는 아래
+      const eliteBoost = rank < 2 ? 4 : (rank < 5 ? 1 : -2);
+      const lowTierPenalty = league.tier > 1 ? -5 * (league.tier - 1) : 0;
+      strength = league.strength + eliteBoost + lowTierPenalty + Math.round(gauss(0, 4));
+    }
+    strength = clamp(strength, 25, 99);
     const reputation = clamp(strength + (rank < 5 ? 5 : 0) + rand(-5, 5), 20, 99);
     clubs.push({
       id: uid('club'),
@@ -52,7 +62,7 @@ export function generateLeagueClubs(league) {
       conf: league.conf,
       strength,
       reputation,
-      budget: Math.round(strength * strength * (league.strength / 60) * 0.5), // 만 유로
+      budget: Math.round(strength * strength * (league.strength / 60) * 0.5),
       trophies: [],
       players: null // lazy
     });
@@ -121,34 +131,67 @@ export function generatePlayer(opts = {}) {
   };
 }
 
-/* ---------- 클럽 강도별 OVR 천장 (빅클럽 독점) ---------- */
+/* ---------- 클럽 강도별 OVR 천장 (세계 절대 기준) ----------
+ *  현실 매핑:
+ *  - Real Madrid (97): Mbappe/Vinicius 91 (max OVR ~92)
+ *  - K League 1 톱 (73): 최고 선수 ~78
+ *  - K League 2 (65): 최고 ~70
+ *  - 변방 리그 약체 (45): 최고 ~58
+ */
 export function maxOvrForClub(club) {
-  // 95+ 클럽도 대부분 95에서 막힘. 99는 전 세계 1-2명만.
-  if (club.strength >= 95) return 97;
-  if (club.strength >= 90) return 93;
-  if (club.strength >= 85) return 90;
-  if (club.strength >= 80) return 86;
-  if (club.strength >= 73) return 82;
-  if (club.strength >= 65) return 78;
-  if (club.strength >= 55) return 73;
-  return 68;
+  const s = club.strength;
+  if (s >= 96) return 92;
+  if (s >= 92) return 89;
+  if (s >= 88) return 86;
+  if (s >= 84) return 84;
+  if (s >= 80) return 82;
+  if (s >= 76) return 80;
+  if (s >= 72) return 78;
+  if (s >= 68) return 75;
+  if (s >= 64) return 72;
+  if (s >= 60) return 69;
+  if (s >= 55) return 66;
+  if (s >= 50) return 62;
+  if (s >= 45) return 58;
+  return 55;
 }
 
 /* ---------- 클럽 강도별 잠재력 천장 ---------- */
 export function maxPotentialForClub(club) {
-  if (club.strength >= 95) return 99;  // 톱 빅클럽만 잠재력 99 보유 가능
-  if (club.strength >= 90) return 95;
-  if (club.strength >= 85) return 92;
-  if (club.strength >= 80) return 89;
-  if (club.strength >= 72) return 86;
-  if (club.strength >= 62) return 81;
-  return 77;
+  const s = club.strength;
+  if (s >= 96) return 99;  // 톱 빅클럽만 잠재력 99 보유 가능
+  if (s >= 92) return 95;
+  if (s >= 88) return 92;
+  if (s >= 84) return 89;
+  if (s >= 80) return 87;
+  if (s >= 75) return 84;
+  if (s >= 68) return 80;
+  if (s >= 60) return 76;
+  if (s >= 50) return 70;
+  return 65;
 }
 
 export function generateClubRoster(club) {
   if (club.players) return club.players;
   const players = [];
-  // 포지션 배분: GK 3, DF 8, MF 8, FW 5
+  // 실제 스타 명단이 있으면 먼저 추가
+  const realStars = REAL_SQUADS[club.name] || [];
+  realStars.forEach(rs => {
+    players.push({
+      id: uid('p'),
+      name: rs.name,
+      nationality: rs.nationality,
+      age: rs.age,
+      position: rs.position,
+      ovr: rs.ovr,
+      potential: Math.max(rs.ovr, clamp(rs.age <= 21 ? rs.ovr + rand(4, 10) : rs.ovr + rand(0, 4), rs.ovr, 99)),
+      value: Math.round(rs.ovr * rs.ovr * 0.5),
+      foot: rs.foot || '오른발',
+      real: true
+    });
+  });
+
+  // 나머지 포지션 채우기 (전체 24명 목표)
   const positions = [
     ...Array(3).fill('GK'),
     ...Array(8).fill('DF'),
@@ -157,34 +200,44 @@ export function generateClubRoster(club) {
   ];
   const clubMaxOvr = maxOvrForClub(club);
   const clubMaxPot = maxPotentialForClub(club);
-  const baseStr = Math.min(club.strength, clubMaxOvr - 4);
+  // 클럽 평균 OVR을 강도에 맞춰 타이트하게 설정
+  const avgOvr = Math.min(club.strength - 3, clubMaxOvr - 4);
 
-  // 같은 포지션 그룹에 OVR 90+ 선수는 1명만 허용 (월클 분산)
+  // 같은 포지션 그룹에 OVR 88+ 선수는 1~2명만 허용
   const eliteByGroup = { GK: 0, DF: 0, MF: 0, FW: 0 };
+  players.forEach(p => {
+    const g = (p.position === 'GK') ? 'GK' :
+      (['CB','LB','RB','LWB','RWB'].includes(p.position)) ? 'DF' :
+      (['CDM','CM','CAM','LM','RM'].includes(p.position)) ? 'MF' : 'FW';
+    if (p.ovr >= 88) eliteByGroup[g]++;
+  });
 
-  for (let i = 0; i < positions.length; i++) {
+  // 나머지 슬롯 (실제 스타 제외)
+  const startIdx = players.length;
+  for (let i = startIdx; i < positions.length; i++) {
     const grp = positions[i];
-    const offset = i < 11 ? rand(-3, 7) : rand(-15, -3);
-    let minOvrP = clamp(baseStr + offset - 5, 35, clubMaxOvr - 5);
-    let maxOvrP = clamp(baseStr + offset + 5, 40, clubMaxOvr);
+    // 주전 (실제 스타 합쳐서 11명까지) — 클럽 평균 ± 4
+    // 백업 (12~24) — 클럽 평균 - 7 ~ -3
+    const isStarter = i < 11;
+    const offset = isStarter ? rand(-3, 4) : rand(-12, -3);
+    let minOvrP = clamp(avgOvr + offset - 2, 35, clubMaxOvr - 2);
+    let maxOvrP = clamp(avgOvr + offset + 2, 40, clubMaxOvr);
 
-    // 같은 그룹에 이미 월클(90+) 있으면 강제로 낮춤
-    if (eliteByGroup[grp] >= 1 && maxOvrP >= 90) {
-      maxOvrP = 89;
-      if (minOvrP > 85) minOvrP = 85;
+    if (eliteByGroup[grp] >= 2 && maxOvrP >= 88) {
+      maxOvrP = 87;
+      if (minOvrP > 84) minOvrP = 84;
     }
 
     const p = generatePlayer({
-      nationality: chance(0.7) ? club.countryCode : pickRandomNation(),
+      nationality: chance(0.65) ? club.countryCode : pickRandomNation(),
       minOvr: minOvrP,
       maxOvr: maxOvrP,
       position: positions[i]
     });
-    // 잠재력 천장 적용
     if (p.potential > clubMaxPot) p.potential = clubMaxPot;
     if (p.ovr > p.potential) p.ovr = p.potential;
 
-    if (p.ovr >= 90) eliteByGroup[grp]++;
+    if (p.ovr >= 88) eliteByGroup[grp]++;
     players.push(p);
   }
   club.players = players;
