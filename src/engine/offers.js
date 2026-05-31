@@ -289,6 +289,14 @@ function makeOffer(state, ovr, avgRating, kind) {
   // 사유
   const reason = pickReason(kind, role, player);
 
+  // 초기 등번호 제안 (인기 번호 7/9/10 제외 — 협상으로 요구 가능)
+  const proposedJersey = (() => {
+    const excluded = [1, 7, 9, 10, 11];
+    let n;
+    do { n = 2 + Math.floor(Math.random() * 50); } while (excluded.includes(n));
+    return n;
+  })();
+
   return {
     clubId: targetClub.id,
     clubName: targetClub.name,
@@ -301,6 +309,7 @@ function makeOffer(state, ovr, avgRating, kind) {
     signOn: Math.round(signOn),
     bonusGoals, bonusAppearances, bonusTrophy,
     buyoutClause,
+    jerseyNumber: proposedJersey,
     years,
     role,
     roleLabel: roleInfo.name,

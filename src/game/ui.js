@@ -49,6 +49,52 @@ export function renderStart() {
         <input type="number" id="in-weight" min="55" max="110" value="72">
       </label>
 
+      <h4 style="margin-top:8px;">외형 (자유 변경 가능)</h4>
+      <label>헤어 스타일
+        <select id="in-hair-style">
+          <option value="단정">단정한 스타일</option>
+          <option value="장발">장발</option>
+          <option value="컬리">컬리 헤어</option>
+          <option value="모히칸">모히칸</option>
+          <option value="포니테일">포니테일</option>
+          <option value="삭발">삭발</option>
+          <option value="드레드">드레드락</option>
+          <option value="아프로">아프로</option>
+        </select>
+      </label>
+      <label>헤어 컬러
+        <select id="in-hair-color">
+          <option value="검정">검정</option>
+          <option value="갈색">갈색</option>
+          <option value="블론드">블론드</option>
+          <option value="빨강">빨강</option>
+          <option value="블루">블루 (염색)</option>
+          <option value="플래티넘">플래티넘</option>
+          <option value="회색">회색</option>
+        </select>
+      </label>
+      <label>피부톤
+        <select id="in-skin">
+          <option value="밝음">밝음</option>
+          <option value="중간">중간</option>
+          <option value="구릿빛">구릿빛</option>
+          <option value="갈색">갈색</option>
+          <option value="진한 갈색">진한 갈색</option>
+        </select>
+      </label>
+      <label>문신
+        <select id="in-tattoo">
+          <option value="없음">없음</option>
+          <option value="팔 슬리브">팔 슬리브</option>
+          <option value="등 풀">등 풀</option>
+          <option value="전신">전신</option>
+        </select>
+      </label>
+      <label>등번호 (1~99)
+        <input type="number" id="in-jersey" min="1" max="99" value="10">
+        <small class="hint">계약 시 협상 가능 / 시즌 중 변경 시 팀 허락 필요</small>
+      </label>
+
       <h4 style="margin-top:8px;">기술 정보</h4>
       <label>주발
         <select id="in-foot">
@@ -151,6 +197,13 @@ export function renderStart() {
     const startOvr = Math.max(40, Math.min(72, parseInt($('in-start-ovr').value) || 50));
     const startLeagueId = $('in-league').value;
     const startClubId = $('in-club').value;
+    const appearance = {
+      hairStyle: $('in-hair-style').value,
+      hairColor: $('in-hair-color').value,
+      skin: $('in-skin').value,
+      tattoo: $('in-tattoo').value
+    };
+    const jerseyNumber = Math.max(1, Math.min(99, parseInt($('in-jersey').value) || 10));
     game.newCareer({
       name,
       nationality: $('in-nation').value,
@@ -158,6 +211,7 @@ export function renderStart() {
       position: $('in-pos').value,
       talent, startOvr,
       height, weight, weakFoot, skillMoves,
+      appearance, jerseyNumber,
       startLeagueId, startClubId,
       preGeneratedClubs: charCreate.clubsByLeague
     });
@@ -429,6 +483,10 @@ function renderPlayer() {
         <h3>신체 / 계약</h3>
         <p>키 / 몸무게: <strong>${p.height || 178}cm / ${p.weight || 72}kg</strong></p>
         <p>주발: <strong>${p.foot}</strong> · 약발 ${'★'.repeat(p.weakFoot || 3)}${'☆'.repeat(5 - (p.weakFoot || 3))} · 스킬무브 ${'★'.repeat(p.skillMoves || 3)}${'☆'.repeat(5 - (p.skillMoves || 3))}</p>
+        <p>등번호: <strong style="color:var(--accent-2); font-size:1.2rem;">#${p.jerseyNumber || 10}</strong>
+          <button id="btn-jersey-change" style="margin-left:8px; padding:2px 10px; font-size:0.78rem;">변경 요청</button></p>
+        <p>외형: ${escapeHtml(p.appearance?.hairStyle || '단정')} ${escapeHtml(p.appearance?.hairColor || '검정')} · 피부 ${escapeHtml(p.appearance?.skin || '중간')} · 문신 ${escapeHtml(p.appearance?.tattoo || '없음')}
+          <button id="btn-appearance-change" style="margin-left:8px; padding:2px 10px; font-size:0.78rem;">외형 변경</button></p>
         <p>클럽: <strong>${p.clubName}</strong>${p.isOnLoan && p.loanFrom ? ` <span class="text-warn">📋 ${escapeHtml(p.loanFrom.clubName)}에서 임대</span>` : ''}</p>
         <p>리그: ${getLeague(p.leagueId).name}</p>
         <p>나이: ${p.age}세 · 재능 ${'★'.repeat(p.talent)}${'☆'.repeat(5 - p.talent)}</p>
@@ -465,6 +523,10 @@ function renderPlayer() {
       </div>
     </div>
   `;
+  const jerseyBtn = $('btn-jersey-change');
+  if (jerseyBtn) jerseyBtn.onclick = () => showJerseyChangeModal();
+  const appearBtn = $('btn-appearance-change');
+  if (appearBtn) appearBtn.onclick = () => showAppearanceModal();
   $('btn-retire').onclick = () => {
     if (confirm('정말로 은퇴하시겠습니까? 이후 게임을 재시작해야 합니다.')) {
       game.retire();
@@ -1536,8 +1598,9 @@ export function showPreMatchChoice(fixture, callback) {
  *  하이라이트 선택형 매치 UI
  * ============================================================ */
 import { TACTICS, ROLES, determineStartingStatus, matchImportance } from '../engine/match.js';
+import { getClubManager, assignPlayerRole, TACTIC_NAMES, PHILOSOPHY_NAMES } from '../data/managers.js';
 
-/* 경기 전 모달 — 전술 + 역할 + 출전 상태 */
+/* 경기 전 모달 — 감독이 전술/역할 자동 배정 (사용자는 출전 확인만) */
 export function showPreMatchHighlightModal(fixture, player, callback) {
   const status = determineStartingStatus(player, fixture);
   const ovr = calcOVR(player);
@@ -1572,6 +1635,12 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
   // 후보 출전 — 교체 출전 선택 가능
   const subAvailable = (status === 'bench') && Math.random() < 0.6;
 
+  // 감독 전술 + 역할 자동 배정 (사용자 선택 X)
+  const myClub = (game.state.world.clubs[player.leagueId] || []).find(c => c.id === player.clubId);
+  const managerInfo = myClub ? getClubManager(myClub) : { manager: '감독', tactic: 'possession', philosophy: 'balanced' };
+  const assignedRole = assignPlayerRole(player, managerInfo);
+  const roleObj = ROLES.find(r => r.id === assignedRole) || ROLES[3];
+
   const overlay = document.createElement('div');
   overlay.id = 'modal-overlay';
   overlay.innerHTML = `
@@ -1584,26 +1653,17 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
       ${status === 'bench' && !subAvailable ? `<p class="hint">⚠ 감독이 ${(player.fatigue || 0) >= 50 ? '피로 누적으로 로테이션 — ' : ''}오늘은 출전 기회 없음. 팀 결과만 반영.</p>` : ''}
       ${subAvailable ? '<p class="text-info">💡 교체 출전 — 후반 30분 정도 출전. 평점 시작점 낮음.</p>' : ''}
 
-      <h4 style="margin-top:14px;">감독 전술 선택</h4>
-      <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px;">
-        ${TACTICS.map((t, i) => `
-          <label class="tactic-opt" style="background:var(--bg-2); padding:8px; border-radius:6px; cursor:pointer;">
-            <input type="radio" name="tactic" value="${t.id}" ${i === 0 ? 'checked' : ''}>
-            <strong>${t.name}</strong>
-            <small style="display:block; color:var(--muted); font-size:0.78rem;">${t.desc}</small>
-          </label>
-        `).join('')}
+      <h4 style="margin-top:14px;">🎩 감독</h4>
+      <div style="background:var(--bg-2); padding:10px; border-radius:6px;">
+        <p><strong>${escapeHtml(managerInfo.manager)}</strong> ${managerInfo.isReal ? '<span style="font-size:0.75rem; color:var(--accent-3);">[실제 감독]</span>' : ''}</p>
+        <p style="font-size:0.86rem; margin-top:4px;">전술: <strong style="color:var(--accent-2);">${TACTIC_NAMES[managerInfo.tactic] || managerInfo.tactic}</strong> · 철학: <strong style="color:var(--accent-3);">${PHILOSOPHY_NAMES[managerInfo.philosophy] || managerInfo.philosophy}</strong></p>
+        ${managerInfo.signature ? `<p style="font-size:0.78rem; color:var(--muted); margin-top:4px;">시그니처: ${escapeHtml(managerInfo.signature)}</p>` : ''}
       </div>
 
-      <h4 style="margin-top:12px;">내 역할 선택</h4>
-      <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px;">
-        ${ROLES.map((r, i) => `
-          <label class="role-opt" style="background:var(--bg-2); padding:8px; border-radius:6px; cursor:pointer;">
-            <input type="radio" name="role" value="${r.id}" ${i === 3 ? 'checked' : ''}>
-            <strong>${r.name}</strong>
-            <small style="display:block; color:var(--muted); font-size:0.78rem;">${r.desc}</small>
-          </label>
-        `).join('')}
+      <h4 style="margin-top:10px;">⚽ 내 역할 (감독 배정)</h4>
+      <div style="background:var(--bg-2); padding:10px; border-radius:6px;">
+        <p><strong style="color:var(--accent);">${roleObj.name}</strong></p>
+        <p style="font-size:0.82rem; color:var(--muted); margin-top:4px;">${roleObj.desc}</p>
       </div>
 
       <div class="actions" style="margin-top:16px;">
@@ -1613,13 +1673,17 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
   `;
   document.body.appendChild(overlay);
   document.getElementById('match-start').onclick = () => {
-    const tactic = overlay.querySelector('input[name=tactic]:checked').value;
-    const role = overlay.querySelector('input[name=role]:checked').value;
     document.body.removeChild(overlay);
     if (status === 'bench' && !subAvailable) {
       callback({ skipMatch: true });
     } else {
-      callback({ tactic, role, status, isSubstitute: status === 'bench' && subAvailable });
+      callback({
+        tactic: managerInfo.tactic,
+        role: assignedRole,
+        status,
+        isSubstitute: status === 'bench' && subAvailable,
+        managerName: managerInfo.manager
+      });
     }
   };
 }
@@ -1814,8 +1878,22 @@ VIEWS.transfers = function renderTransfersV2() {
           <p>📋 계약: <strong>${o.years}년${o.isLoan ? ' 임대' : ''}</strong></p>
           <p>🎁 사이닝: <strong>${(o.signOn || 0).toLocaleString()}만 €</strong></p>
           ${o.buyoutClause ? `<p>💎 바이아웃: <strong>${o.buyoutClause.toLocaleString()}만 €</strong></p>` : '<p>💎 바이아웃: <strong class="text-muted">없음</strong></p>'}
+          <p>🔢 등번호: <strong>#${o.jerseyNumber || '?'}</strong></p>
           <p>📅 합류일: <strong>${isDelayed ? `${jd.year}/${jd.month}/${jd.day}` : '즉시'}</strong></p>
         </div>
+        ${o.guaranteedStarts || o.bigClubReleaseClause || o.loanToBuyOption || o.noTransferList || o.imageRightsKept || o.houseProvided || o.familyRelocation || o.agentFeePaid ? `
+          <h4 style="margin-top:10px;">🎁 협상 결과 추가 조항</h4>
+          <p style="font-size:0.83rem;">
+            ${o.guaranteedStarts ? `📌 선발 ${o.guaranteedStarts}경기 보장 · ` : ''}
+            ${o.bigClubReleaseClause ? '⚡ 빅클럽 면제 · ' : ''}
+            ${o.loanToBuyOption ? '📋 임대→영입 옵션 · ' : ''}
+            ${o.noTransferList ? '🛡 강제이적 제외 · ' : ''}
+            ${o.imageRightsKept ? '📸 초상권 본인 · ' : ''}
+            ${o.houseProvided ? '🏠 주거 제공 · ' : ''}
+            ${o.familyRelocation ? '👨‍👩‍👧 가족 이주 · ' : ''}
+            ${o.agentFeePaid ? '💼 에이전트 수수료' : ''}
+          </p>
+        ` : ''}
 
         <h4 style="margin-top:10px;">💼 보너스</h4>
         <p style="font-size:0.82rem;">골당 ${o.bonusGoals}만 € · 출전당 ${o.bonusAppearances}만 € · 우승시 ${o.bonusTrophy}만 €</p>
@@ -1918,25 +1996,68 @@ VIEWS.transfers = function renderTransfersV2() {
 };
 
 function showNegotiateModal(offerId, callback) {
+  const s = game.state;
+  const offer = s.offers.find(o => o.id === offerId) || {};
   const overlay = document.createElement('div');
   overlay.id = 'modal-overlay';
   overlay.innerHTML = `
-    <div class="modal-content" style="max-width:520px;">
-      <h3>🤝 협상</h3>
-      <p class="hint">에이전트를 통해 조건 개선을 요구합니다. 거듭된 협상은 클럽 측 인내를 시험합니다 — 최대 3회.</p>
-      <div style="display:flex; flex-direction:column; gap:8px; margin-top:14px;">
-        <button class="decision-choice" data-demand="wage_up" style="text-align:left; padding:10px 14px;">💰 주급 20% 인상 요구</button>
-        <button class="decision-choice" data-demand="contract_extend" style="text-align:left; padding:10px 14px;">📋 계약 1년 추가 요구</button>
-        <button class="decision-choice" data-demand="buyout_add" style="text-align:left; padding:10px 14px;">💎 바이아웃 조항 추가/상향</button>
-        <button class="decision-choice" data-demand="playing_time" style="text-align:left; padding:10px 14px;">⚽ 출전 시간 보장 +500분</button>
-        <button class="decision-choice" data-demand="captain" style="text-align:left; padding:10px 14px;">👑 주장단 합류 약속</button>
+    <div class="modal-content" style="max-width:620px; max-height:85vh; overflow-y:auto;">
+      <h3>🤝 협상 (라운드 ${(offer.negotiationRound || 0) + 1}/5)</h3>
+      <p class="hint">에이전트를 통해 조건 개선 요구. 라운드가 깊을수록 철회 위험.</p>
+      <div style="background:var(--bg-2); padding:8px; border-radius:6px; margin-top:8px; font-size:0.82rem;">
+        <strong>현재:</strong> 주급 ${offer.wage}만 · 계약 ${offer.years}년 · 등번호 ${offer.jerseyNumber ? '#' + offer.jerseyNumber : '미정'}
+        · 바이아웃 ${offer.buyoutClause ? offer.buyoutClause.toLocaleString() + '만' : '없음'}
+        ${offer.captainPath ? ' · 주장단' : ''}
+      </div>
+      <h4 style="margin-top:14px;">💰 재정</h4>
+      <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px;">
+        <button class="neg-btn" data-demand="wage_up">💰 주급 +20%</button>
+        <button class="neg-btn" data-demand="wage_up_huge">💰💰 주급 +40%</button>
+        <button class="neg-btn" data-demand="signing_bonus_up">🎁 사이닝 인상</button>
+        <button class="neg-btn" data-demand="bonus_goals_up">⚽ 골 보너스 2배</button>
+      </div>
+      <h4 style="margin-top:10px;">📋 계약</h4>
+      <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px;">
+        <button class="neg-btn" data-demand="contract_extend">📋 계약 +1년</button>
+        <button class="neg-btn" data-demand="contract_shorter">⏩ 짧은 계약</button>
+        <button class="neg-btn" data-demand="buyout_add">💎 바이아웃 ↑</button>
+        <button class="neg-btn" data-demand="buyout_lower">⬇ 바이아웃 ↓</button>
+      </div>
+      <h4 style="margin-top:10px;">⚽ 출전/지위</h4>
+      <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px;">
+        <button class="neg-btn" data-demand="playing_time">⚽ 출전 +500분</button>
+        <button class="neg-btn" data-demand="guaranteed_starts">📌 선발 보장</button>
+        <button class="neg-btn" data-demand="captain">👑 주장단</button>
+        <button class="neg-btn" data-demand="jersey_number">🔢 등번호 보장</button>
+      </div>
+      <h4 style="margin-top:10px;">🔓 자유 조항</h4>
+      <div style="display:grid; grid-template-columns:repeat(2,1fr); gap:6px;">
+        <button class="neg-btn" data-demand="release_option_big_club">⚡ 빅클럽 면제</button>
+        <button class="neg-btn" data-demand="loan_to_buy">📋 임대→영입 옵션</button>
+        <button class="neg-btn" data-demand="no_transfer_list">🛡 강제이적 제외</button>
+        <button class="neg-btn" data-demand="image_rights">📸 초상권 본인</button>
+      </div>
+      <h4 style="margin-top:10px;">🎁 기타</h4>
+      <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:6px;">
+        <button class="neg-btn" data-demand="house_provided">🏠 주거 제공</button>
+        <button class="neg-btn" data-demand="family_relocation">👨‍👩‍👧 가족 이주</button>
+        <button class="neg-btn" data-demand="agent_fee_paid">💼 에이전트 수수료</button>
       </div>
       <div class="actions" style="margin-top:14px;">
-        <button id="neg-cancel">취소</button>
+        <button id="neg-cancel">닫기</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
+  // 버튼 스타일링
+  overlay.querySelectorAll('.neg-btn').forEach(b => {
+    b.style.cssText = 'text-align:left; padding:8px 12px; font-size:0.83rem;';
+    b.dataset.demand && b.setAttribute('data-demand', b.dataset.demand);
+  });
+  // data-demand 이벤트
+  overlay.querySelectorAll('[data-demand]').forEach(b => {
+    b.classList.add('decision-choice');
+  });
   overlay.querySelectorAll('[data-demand]').forEach(btn => {
     btn.onclick = () => {
       const demand = btn.dataset.demand;
@@ -2289,4 +2410,121 @@ export function showRelegationModal(info, callback) {
     document.body.removeChild(overlay);
     callback && callback();
   };
+}
+
+/* ---------- 외형 변경 모달 (자유 변경) ---------- */
+function showAppearanceModal() {
+  const s = game.state;
+  const a = s.player.appearance || {};
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:480px;">
+      <h3>💇 외형 변경 (자유)</h3>
+      <p class="hint">외형은 언제든 자유롭게 바꿀 수 있습니다.</p>
+      <label style="margin-top:10px; display:flex; flex-direction:column; gap:4px;">헤어 스타일
+        <select id="app-hair-style">
+          ${['단정','장발','컬리','모히칸','포니테일','삭발','드레드','아프로'].map(o => `<option value="${o}" ${o === a.hairStyle ? 'selected' : ''}>${o}</option>`).join('')}
+        </select>
+      </label>
+      <label style="margin-top:6px; display:flex; flex-direction:column; gap:4px;">헤어 컬러
+        <select id="app-hair-color">
+          ${['검정','갈색','블론드','빨강','블루','플래티넘','회색'].map(o => `<option value="${o}" ${o === a.hairColor ? 'selected' : ''}>${o}</option>`).join('')}
+        </select>
+      </label>
+      <label style="margin-top:6px; display:flex; flex-direction:column; gap:4px;">피부톤
+        <select id="app-skin">
+          ${['밝음','중간','구릿빛','갈색','진한 갈색'].map(o => `<option value="${o}" ${o === a.skin ? 'selected' : ''}>${o}</option>`).join('')}
+        </select>
+      </label>
+      <label style="margin-top:6px; display:flex; flex-direction:column; gap:4px;">문신
+        <select id="app-tattoo">
+          ${['없음','팔 슬리브','등 풀','전신'].map(o => `<option value="${o}" ${o === a.tattoo ? 'selected' : ''}>${o}</option>`).join('')}
+        </select>
+      </label>
+      <div class="actions" style="margin-top:14px;">
+        <button class="primary" id="app-save">저장</button>
+        <button id="app-cancel">취소</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('app-save').onclick = () => {
+    s.player.appearance = {
+      hairStyle: document.getElementById('app-hair-style').value,
+      hairColor: document.getElementById('app-hair-color').value,
+      skin: document.getElementById('app-skin').value,
+      tattoo: document.getElementById('app-tattoo').value
+    };
+    document.body.removeChild(overlay);
+    game.log_(`💇 외형 변경 완료`, 'event');
+    renderView('player');
+  };
+  document.getElementById('app-cancel').onclick = () => document.body.removeChild(overlay);
+}
+
+/* ---------- 등번호 변경 요청 모달 (팀 허락 필요) ---------- */
+function showJerseyChangeModal() {
+  const s = game.state;
+  const yearChanged = s.player.jerseyChangeAvailable?.year;
+  const alreadyChanged = yearChanged === s.year;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:460px;">
+      <h3>🔢 등번호 변경 요청</h3>
+      <p>현재 등번호: <strong style="color:var(--accent-2); font-size:1.3rem;">#${s.player.jerseyNumber}</strong></p>
+      <p class="hint">등번호 변경은 팀의 허락이 필요합니다. 시즌당 1회만 가능.</p>
+      ${alreadyChanged ? '<p class="text-bad">⚠ 이번 시즌 이미 변경했습니다. 다음 시즌에 다시 시도하세요.</p>' : `
+        <label style="margin-top:10px; display:flex; flex-direction:column; gap:4px;">새 등번호 (1~99)
+          <input type="number" id="jersey-new" min="1" max="99" value="${s.player.jerseyNumber}">
+        </label>
+        <p class="hint" style="margin-top:8px;">인기 등번호(7/9/10)는 팀 내 다른 선수가 차지하고 있을 가능성 ↑</p>
+      `}
+      <div class="actions" style="margin-top:14px;">
+        ${alreadyChanged ? '<button id="jersey-close">확인</button>' :
+          '<button class="primary" id="jersey-request">팀에 요청</button><button id="jersey-cancel">취소</button>'}
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  if (alreadyChanged) {
+    document.getElementById('jersey-close').onclick = () => document.body.removeChild(overlay);
+  } else {
+    document.getElementById('jersey-request').onclick = () => {
+      const newNum = Math.max(1, Math.min(99, parseInt(document.getElementById('jersey-new').value) || 10));
+      if (newNum === s.player.jerseyNumber) {
+        alert('같은 번호입니다');
+        return;
+      }
+      // 팀 승인 — 인기 번호일수록 어려움, OVR 높을수록 쉬움
+      const ovr = calcOVR(s.player);
+      let approvalProb = 0.5;
+      if ([7, 9, 10, 11].includes(newNum)) approvalProb -= 0.25; // 인기 번호
+      if ([1].includes(newNum) && groupOf(s.player.position) !== 'GK') approvalProb = 0.0;
+      if (ovr >= 88) approvalProb += 0.30;
+      else if (ovr >= 82) approvalProb += 0.15;
+      else if (ovr >= 75) approvalProb += 0.05;
+      else if (ovr < 65) approvalProb -= 0.20;
+      // 사기/관계 보너스
+      if (s.player.morale >= 80) approvalProb += 0.10;
+      approvalProb = Math.max(0.05, Math.min(0.95, approvalProb));
+
+      const approved = Math.random() < approvalProb;
+      document.body.removeChild(overlay);
+      if (approved) {
+        s.player.jerseyNumber = newNum;
+        s.player.jerseyChangeAvailable = { year: s.year };
+        game.log_(`✅ 등번호 변경 승인: #${s.player.jerseyNumber} → #${newNum}`, 'good');
+        alert(`✅ 팀이 등번호 변경을 승인했습니다!\n새 등번호: #${newNum}`);
+      } else {
+        game.log_(`❌ 등번호 변경 거절 — 팀 내부 사정`, 'bad');
+        alert(`❌ 팀이 등번호 변경을 거절했습니다.\n사유: 이미 다른 선수가 사용 중이거나, 클럽 정책상 불가.`);
+      }
+      renderView('player');
+    };
+    document.getElementById('jersey-cancel').onclick = () => document.body.removeChild(overlay);
+  }
 }

@@ -513,7 +513,26 @@ async function processSeasonEnd() {
       }
     }
     if (seasonResult.report.awards && seasonResult.report.awards.length > 0) {
-      seasonResult.report.awards.forEach(a => game.log_(`🏅 개인상: ${a.name}`, 'event'));
+      for (const a of seasonResult.report.awards) {
+        game.log_(`🏅 개인상: ${a.name}`, 'event');
+        // 명성 60+ 개인상은 축하 패널
+        if (a.prestige >= 60) {
+          await new Promise(res => showChampionshipModal({
+            title: '🏅 개인상 수상!',
+            trophyName: a.name,
+            subtitle: `${seasonResult.report.season - 1}-${seasonResult.report.season % 100} 시즌 활약의 결실`,
+            icon: a.prestige >= 90 ? '🏅' : (a.prestige >= 75 ? '🎖' : '🏆'),
+            accent: a.prestige >= 90 ? 'gold' : 'silver',
+            stats: {
+              '본인 골': seasonResult.report.goals,
+              '본인 어시': seasonResult.report.assists,
+              '평균 평점': seasonResult.report.avgRating.toFixed(2),
+              '명성': a.prestige
+            },
+            closeLabel: '시상식 참석'
+          }, res));
+        }
+      }
     }
     if (seasonResult.report.newTraits && seasonResult.report.newTraits.length > 0) {
       seasonResult.report.newTraits.forEach(t => game.log_(`✨ 신규 특성 획득: ${t.name} — ${t.desc}`, 'event'));

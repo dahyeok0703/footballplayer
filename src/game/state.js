@@ -39,7 +39,10 @@ export const game = {
 
   /* ---------- 새 커리어 시작 ---------- */
   newCareer(opts) {
-    const { name, nationality, foot, position, talent, startOvr = 50, height = 178, weight = 72, weakFoot = 3, skillMoves = 3, startLeagueId: userLeagueId, startClubId: userClubId, preGeneratedClubs } = opts;
+    const { name, nationality, foot, position, talent, startOvr = 50, height = 178, weight = 72, weakFoot = 3, skillMoves = 3,
+            appearance = { hairStyle: '단정', hairColor: '검정', skin: '중간', tattoo: '없음' },
+            jerseyNumber = 10,
+            startLeagueId: userLeagueId, startClubId: userClubId, preGeneratedClubs } = opts;
 
     // 모든 리그 클럽 생성 (사용자가 미리 본 클럽은 재사용)
     const world = { clubs: {}, leagueTables: {}, leagueChampions: {}, tournaments: {} };
@@ -117,6 +120,8 @@ export const game = {
       id: 'me',
       name, nationality, foot, position, talent,
       height, weight, weakFoot, skillMoves,
+      appearance, jerseyNumber,
+      jerseyChangeAvailable: { year: null }, // 시즌당 1회 변경 (팀 허락 후)
       age: 16, birthYear: 2010,
       stats, potential,
       clubId: startClub.id,
@@ -476,17 +481,17 @@ export const game = {
     }
   },
 
-  /* ---------- 협상 (주급/계약기간/바이아웃/출전보장/주장단) ---------- */
+  /* ---------- 협상 (15가지 옵션) ---------- */
   negotiateOffer(offerId, demand) {
     const s = this.state;
     const offer = s.offers.find(o => o.id === offerId);
     if (!offer || offer.withdrawn) return { error: 'no_offer' };
-    if (offer.negotiationRound >= 3) return { error: 'too_many_rounds' };
+    if (offer.negotiationRound >= 5) return { error: 'too_many_rounds' };
     offer.negotiationRound++;
 
     const round = offer.negotiationRound;
-    // 성공 확률: round 1 = 70%, 2 = 50%, 3 = 30%
-    const successProb = 0.85 - (round - 1) * 0.2 - (offer.interestLevel < 60 ? 0.15 : 0);
+    // 성공 확률: round 1 = 80%, 2 = 60%, 3 = 45%, 4 = 30%, 5 = 18%
+    const successProb = 0.85 - (round - 1) * 0.18 - (offer.interestLevel < 60 ? 0.15 : 0);
 
     let log = '';
     let success = false;
@@ -494,38 +499,109 @@ export const game = {
     if (Math.random() < successProb) {
       success = true;
       switch (demand) {
-        case 'wage_up':
-          const oldWage = offer.wage;
+        case 'wage_up': {
+          const old = offer.wage;
           offer.wage = Math.round(offer.wage * 1.20);
-          log = `✅ 주급 인상 합의: ${oldWage}만 € → ${offer.wage}만 € (+20%)`;
+          log = `✅ 주급 인상: ${old}만 → ${offer.wage}만 € (+20%)`;
           break;
+        }
+        case 'wage_up_huge': {
+          const old = offer.wage;
+          offer.wage = Math.round(offer.wage * 1.40);
+          log = `✅ 주급 대폭 인상: ${old}만 → ${offer.wage}만 € (+40%)`;
+          break;
+        }
         case 'contract_extend':
           offer.years++;
-          log = `✅ 계약 1년 연장: ${offer.years}년 계약`;
+          log = `✅ 계약 1년 추가: ${offer.years}년`;
+          break;
+        case 'contract_shorter':
+          offer.years = Math.max(1, offer.years - 1);
+          log = `✅ 짧은 계약: ${offer.years}년 (자유 빨리)`;
           break;
         case 'buyout_add':
           if (!offer.buyoutClause) offer.buyoutClause = Math.round(offer.fee * 2);
           else offer.buyoutClause = Math.round(offer.buyoutClause * 1.3);
           log = `✅ 바이아웃 추가/상향: ${offer.buyoutClause.toLocaleString()}만 €`;
           break;
+        case 'buyout_lower':
+          offer.buyoutClause = Math.round((offer.buyoutClause || offer.fee * 3) * 0.65);
+          log = `✅ 바이아웃 하향: ${offer.buyoutClause.toLocaleString()}만 € (이적 자유도↑)`;
+          break;
         case 'playing_time':
           offer.playingTimeGuarantee = (offer.playingTimeGuarantee || 1500) + 500;
-          log = `✅ 출전 시간 보장 강화: 최소 ${offer.playingTimeGuarantee}분`;
+          log = `✅ 출전 시간 보장 +500분: 최소 ${offer.playingTimeGuarantee}분`;
+          break;
+        case 'guaranteed_starts':
+          offer.guaranteedStarts = (offer.guaranteedStarts || 0) + 20;
+          log = `✅ 선발 보장: 시즌 최소 ${offer.guaranteedStarts}경기 선발`;
           break;
         case 'captain':
           offer.captainPath = '주장단 합류 약속';
-          log = `✅ 주장단 합류 약속 받음`;
+          log = `✅ 주장단 합류 약속`;
           break;
+        case 'jersey_number': {
+          const num = Math.floor(Math.random() * 99) + 1;
+          offer.jerseyNumber = num;
+          log = `✅ 등번호 #${num} 보장`;
+          break;
+        }
+        case 'signing_bonus_up': {
+          const old = offer.signOn || 0;
+          offer.signOn = Math.round(old * 1.5 + offer.wage * 2);
+          log = `✅ 사이닝 보너스 인상: ${old.toLocaleString()} → ${offer.signOn.toLocaleString()}만 €`;
+          break;
+        }
+        case 'bonus_goals_up': {
+          const old = offer.bonusGoals || 0;
+          offer.bonusGoals = old * 2;
+          log = `✅ 골 보너스 2배: ${offer.bonusGoals}만 €/골`;
+          break;
+        }
+        case 'loan_to_buy': {
+          offer.loanToBuyOption = true;
+          log = `✅ 임대 → 완전이적 옵션 추가 (시즌 후 활약 좋으면 자동 영입)`;
+          break;
+        }
+        case 'release_option_big_club': {
+          offer.bigClubReleaseClause = true;
+          log = `✅ 빅클럽 오퍼 시 면제 조항 (UCL 단골 클럽 제안 시 자유)`;
+          break;
+        }
+        case 'image_rights': {
+          offer.imageRightsKept = true;
+          log = `✅ 초상권 100% 본인 소유`;
+          break;
+        }
+        case 'house_provided': {
+          offer.houseProvided = true;
+          log = `✅ 클럽 측 주거 제공 (시즌당 +50만 € 가치)`;
+          break;
+        }
+        case 'family_relocation': {
+          offer.familyRelocation = true;
+          log = `✅ 가족 이주 패키지 (이주 비용 + 학교 지원)`;
+          break;
+        }
+        case 'agent_fee_paid': {
+          offer.agentFeePaid = true;
+          log = `✅ 에이전트 수수료 클럽 부담`;
+          break;
+        }
+        case 'no_transfer_list': {
+          offer.noTransferList = true;
+          log = `✅ 강제 이적 명단 제외 보장`;
+          break;
+        }
         default:
           log = '✅ 조건 합의';
       }
     } else {
-      // 실패 - 라운드가 깊을수록 철회 위험
-      if (round >= 3 || (round === 2 && Math.random() < 0.3)) {
+      if (round >= 4 || (round >= 3 && Math.random() < 0.4)) {
         offer.withdrawn = true;
-        log = `❌ ${offer.clubName} 측 \"이 정도 조건이면 다른 영입을 검토할 수밖에 없다\" — 오퍼 철회.`;
+        log = `❌ ${offer.clubName} 측 \"이런 조건은 받아들일 수 없다\" — 오퍼 철회.`;
       } else {
-        log = `❌ ${offer.clubName} 측 거절. 추가 협상 가능하지만 위험.`;
+        log = `❌ ${offer.clubName} 측 거절. 추가 협상 가능 (위험).`;
       }
     }
     return { success, log, withdrawn: !!offer.withdrawn };
@@ -564,8 +640,9 @@ export const game = {
     s.player.country = newLeague.country;
     s.player.salary = offer.wage;
     s.player.contractYears = offer.years;
-    // 사이닝 보너스는 즉시 이적(isImmediate)일 때만 여기서 지급
-    // 지연 이적은 acceptOffer에서 사전 지급되므로 중복 방지
+    // 등번호 합의된 번호로 설정
+    if (offer.jerseyNumber) s.player.jerseyNumber = offer.jerseyNumber;
+    // 사이닝 보너스 중복 지급 방지
     if (!offer._signOnPaid) {
       s.player.money += Math.round(offer.signOn || 0);
       offer._signOnPaid = true;

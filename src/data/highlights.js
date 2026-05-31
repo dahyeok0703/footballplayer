@@ -201,24 +201,45 @@ export const HIGHLIGHT_TEMPLATES = [
     ]
   },
   {
-    id: 'h_aerial',
+    id: 'h_aerial_defense',
     situation: 'aerial',
     weight: 7,
-    positions: ['CB','LB','RB','CDM','CM','ST','CF','DF','MF','FW'],
-    text: '상대의 크로스가 박스 안으로! 공중 경합 상황.',
+    positions: ['CB','LB','RB','LWB','RWB','CDM','DF'],
+    text: '상대의 크로스가 박스 안으로 날아옵니다! 우리 박스 — 클리어가 필요합니다.',
     choices: [
-      { label: '🎯 강한 헤딩 클리어', stat: 'physical', diff: 68,
-        success: { rating: +7, narrative: '강력한 헤딩으로 멀리 클리어!' },
+      { label: '💪 강한 헤딩 클리어 (멀리)', stat: 'physical', diff: 68,
+        success: { rating: +7, narrative: '강력한 헤딩으로 멀리 클리어! 위기 모면.' },
         failure: { rating: -3, narrative: '헤딩이 빗나가 위치 노출.' } },
-      { label: '⚡ 점프해서 헤딩 슛', stat: 'shooting', diff: 78,
+      { label: '🎯 정확한 헤딩 (동료 방향으로)', stat: 'positioning', diff: 65,
+        success: { rating: +8, narrative: '동료에게 헤딩 연결 — 즉시 역습 시작!', keyMoment: true },
+        failure: { rating: -3, narrative: '헤딩이 짧아 상대 재공격.' } },
+      { label: '🛡️ 점프 차단 (자세 잡기)', stat: 'positioning', diff: 55,
+        success: { rating: +5, narrative: '위치 선정으로 상대 헤딩 차단.' },
+        failure: { rating: -2, narrative: '상대에게 우위 빼앗김.' } },
+      { label: '↪️ GK에게 백패스', stat: 'mental', diff: 40,
+        success: { rating: +3, narrative: 'GK에게 안전하게 처리.' },
+        failure: { rating: -2, narrative: '백패스 부정확.' } }
+    ]
+  },
+  {
+    id: 'h_aerial_attack',
+    situation: 'aerial',
+    weight: 6,
+    positions: ['ST','CF','SS','CAM','LW','RW','FW'],
+    text: '아군의 크로스가 박스 안으로! 공격 진영 — 헤딩 마무리 기회!',
+    choices: [
+      { label: '⚡ 강력한 헤딩 슛 (정조준)', stat: 'shooting', diff: 75,
         success: { goal: 0.7, rating: +13, fan: +25, narrative: '강력한 헤딩 슛이 골망을 흔든다!', keyMoment: true },
         failure: { rating: -4, narrative: '헤딩이 골키퍼 정면.' } },
-      { label: '🛡️ 위치만 차지', stat: 'positioning', diff: 50,
-        success: { rating: +4, narrative: '위치 선정으로 상대 헤딩 차단.' },
-        failure: { rating: -1, narrative: '상대에게 우위 빼앗김.' } },
-      { label: '↩️ 동료에게 양보', stat: 'mental', diff: 40,
-        success: { rating: +2, narrative: '동료가 헤딩으로 처리.' },
-        failure: { rating: -1, narrative: '경합이 모호해 상대가 따냄.' } }
+      { label: '🎯 침착한 다이빙 헤딩', stat: 'physical', diff: 72,
+        success: { goal: 0.7, rating: +14, fan: +28, narrative: '다이빙 헤딩 — 환상적인 골!', keyMoment: true },
+        failure: { rating: -4, narrative: '다이빙 타이밍이 안 맞음.' } },
+      { label: '🔀 헤딩 플릭 (동료에게)', stat: 'mental', diff: 60,
+        success: { assist: 0.6, rating: +9, narrative: '영리한 플릭 패스, 동료가 슛 골인!' },
+        failure: { rating: -2, narrative: '플릭이 부정확.' } },
+      { label: '↩️ 가슴 트래핑 (점프 X)', stat: 'mental', diff: 55,
+        success: { rating: +5, narrative: '가슴으로 받아 안전하게 처리.' },
+        failure: { rating: -2, narrative: '트래핑 어색.' } }
     ]
   },
   {
