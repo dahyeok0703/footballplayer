@@ -132,24 +132,60 @@ export function evaluateChoice(player, highlight, choiceIdx, tactic, role, match
   let ratingDelta = result.rating || 0;
 
   if (success && (result.goal || 0) > 0) {
-    const goalProb = clamp((result.goal || 0) * skillRatio * bigGameBonus * formBonus, 0, 1);
-    if (Math.random() < goalProb) {
-      actualGoal = 1; // 골 확정 (narrative 유지)
+    // 슈팅 실제 결과 — 능력치/선택 따라 차등화
+    // 슈팅 관련 능력치(shooting/dribbling 위주)는 finishing factor에 반영
+    // 슈팅 stat에 따른 마무리 보정: shooting/dribbling 높을수록 골 확률↑
+    const shooting = player.stats?.shooting || 50;
+    const mental = player.stats?.mental || 50;
+    // 슛 종류별 가중치 (choice.stat가 무엇이냐에 따라)
+    let finishingFactor;
+    if (choice.stat === 'shooting') {
+      // 직접 슈팅: shooting 능력이 핵심
+      finishingFactor = (shooting - 60) / 40; // -0.5 ~ +1.0
+    } else if (choice.stat === 'mental') {
+      // 침착하게 (칩샷/파넨카): 멘탈+슈팅 평균
+      finishingFactor = ((mental + shooting) / 2 - 60) / 40;
+    } else if (choice.stat === 'dribbling') {
+      // 드리블 후 슛: 드리블+슈팅
+      finishingFactor = ((player.stats?.dribbling || 50 + shooting) / 2 - 60) / 40;
     } else {
-      // 골 못 넣음 — narrative 변경
-      narrative = '슈팅이 골대를 벗어나거나 GK에게 막혔다.';
-      ratingDelta = Math.max(0, ratingDelta - 4);
+      finishingFactor = (shooting - 60) / 50;
+    }
+    finishingFactor = clamp(0.45 + finishingFactor * 0.5, 0.15, 1.0);
+
+    const goalProb = clamp((result.goal || 0) * skillRatio * bigGameBonus * formBonus * finishingFactor, 0, 1);
+    if (Math.random() < goalProb) {
+      actualGoal = 1;
+    } else {
+      // 골 못 넣음 — 미스 종류 narrative
+      const missTypes = [
+        '슈팅이 골키퍼 손에 막혔다.',
+        '슈팅이 골대를 살짝 벗어났다.',
+        '수비수가 결정적인 순간 다리를 뻗어 막아냈다.',
+        '슈팅이 크로스바를 맞고 튕겨 나왔다.',
+        '골키퍼의 환상적인 선방!'
+      ];
+      narrative = missTypes[Math.floor(Math.random() * missTypes.length)];
+      ratingDelta = Math.max(-2, Math.round(ratingDelta * 0.3));
     }
   }
   if (success && (result.assist || 0) > 0) {
-    const assistProb = clamp((result.assist || 0) * skillRatio * bigGameBonus * formBonus * 1.1, 0, 1);
+    // 어시 — 패스 능력 + 동료 결정력 종합
+    const passing = player.stats?.passing || 50;
+    const passingFactor = clamp(0.40 + (passing - 60) / 50 * 0.5, 0.15, 1.0);
+    const assistProb = clamp((result.assist || 0) * skillRatio * bigGameBonus * formBonus * passingFactor * 1.1, 0, 1);
     if (Math.random() < assistProb) {
-      actualAssist = 1; // 어시 확정
+      actualAssist = 1;
     } else {
-      // 어시 기회였지만 동료가 마무리 실패
       if (actualGoal === 0) {
-        narrative = '좋은 패스였지만 동료가 마무리 못 함.';
-        ratingDelta = Math.max(0, Math.round(ratingDelta * 0.6));
+        const missTypes = [
+          '좋은 패스였지만 동료가 마무리 못 함.',
+          '동료의 슈팅이 골대를 벗어났다.',
+          '동료가 GK에게 막혔다.',
+          '동료가 오프사이드 함정에 걸렸다.'
+        ];
+        narrative = missTypes[Math.floor(Math.random() * missTypes.length)];
+        ratingDelta = Math.max(0, Math.round(ratingDelta * 0.5));
       }
     }
   }

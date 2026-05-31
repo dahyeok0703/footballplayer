@@ -485,15 +485,27 @@ export function selectContinentalOpponents(club, allClubsByLeague, conf, cupId) 
 }
 
 /* ---------- 국가대표 일정 ---------- */
+// 동적 import 회피용 lazy 로딩 (circular 방지)
+let _natTeams = null;
+async function loadNatTeams() {
+  if (!_natTeams) {
+    const mod = await import('../data/national_teams.js');
+    _natTeams = mod;
+  }
+  return _natTeams;
+}
+
 export function generateInternationalFixtures(playerNation, year) {
-  // 매년 국가대표 친선/예선 ~10경기
+  // 매년 국가대표 친선/예선 ~10경기 — 실제 국가대표 데이터 기반
+  // (collectTodayEvents에서 pickOpponentForMatch를 사용하므로 이 함수는 폴백용)
   const matches = [];
   const opponents = ALL_NATIONS.filter(n => n !== playerNation);
   for (let i = 0; i < 10; i++) {
+    const oppCode = pick(opponents);
     matches.push({
       type: 'national',
-      opp: pick(opponents),
-      oppStr: 50 + rand(0, 35),
+      opp: oppCode,
+      oppStr: 55 + rand(0, 30), // 폴백: 55~85 범위
       home: chance(0.5),
       competition: chance(0.5) ? '월드컵 예선' : '국가대표 친선전',
       round: chance(0.5) ? '본선 진출전' : '친선'

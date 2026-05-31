@@ -126,14 +126,12 @@ async function processFixture(fixture) {
   // 배경 골 풀 준비 (동료들 골, 상대 자연 골 사전 시뮬)
   prepareAmbientGoals(s.player, fixture, matchState);
 
-  // 매치 정보 (실시간 점수)
-  const teamLabel = fixture.home ? '우리' : (fixture.oppName || '상대').slice(0, 4);
-  const oppLabel = fixture.home ? (fixture.oppName || '상대').slice(0, 4) : '우리';
+  // 매치 정보 (실시간 점수) — 본인 점수 항상 왼쪽, 홈/원정 아이콘만 표시
   const buildScoreInfo = () => ({
-    team: fixture.home ? '🏠 ' + teamLabel : '✈️ ' + teamLabel,
-    opp: fixture.home ? (fixture.oppName || '상대').slice(0, 8) : '🏠 ' + (fixture.oppName || '상대').slice(0, 8),
-    teamScore: fixture.home ? matchState.runningTeamScore : matchState.runningOppScore,
-    oppScore: fixture.home ? matchState.runningOppScore : matchState.runningTeamScore
+    team: (fixture.home ? '🏠 ' : '✈️ ') + '우리',
+    teamScore: matchState.runningTeamScore, // 우리 골 (홈/원정 무관)
+    oppScore: matchState.runningOppScore,    // 상대 골
+    opp: (fixture.oppName || '상대').slice(0, 14)
   });
 
   for (let i = 0; i < highlights.length; i++) {

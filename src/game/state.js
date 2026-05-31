@@ -11,6 +11,7 @@ import { scheduleSeasonDecisions, getDecisionTemplate, applyDecisionEffect } fro
 import { generateDiverseOffers, makeLoanRenewalOffer } from '../engine/offers.js';
 import { NATIONAL_TOURNAMENTS, NATION_TO_CONF } from '../data/tournaments.js';
 import { getContinentalForRank, getContinentalCup, A_MATCH_DATES, MAJOR_TOURNAMENTS, getInternationalMatchType, getPrimaryCup } from '../data/cups.js';
+import { NATIONAL_TEAMS, getNationalTeam, pickOpponentForMatch } from '../data/national_teams.js';
 import { runOffseasonSim, ensureTopRosters } from '../engine/world_sim.js';
 import { checkNewlyEarnedTraits, getTrait } from '../data/traits.js';
 
@@ -853,17 +854,20 @@ function collectTodayEvents(s) {
     if (aMatchDate && !sameDate(s.player.lastAMatchDate, today)) {
       const conf = NATION_TO_CONF[s.player.nationality];
       const mtInfo = getInternationalMatchType(today.year, today.month, conf);
-      const oppNation = pickOpponentNation(s.player.nationality, conf);
+      // 실제 국가대표 데이터 사용 (강도 정확)
+      // 예선전은 같은 연맹 우선, 친선은 다른 연맹도 가능
+      const isQualifier = mtInfo.type === 'wc_qualifier' || mtInfo.type === 'euro_qualifier' || mtInfo.type === 'asian_qualifier' || mtInfo.type === 'afcon_qualifier';
+      const oppTeam = pickOpponentForMatch(s.player.nationality, conf, isQualifier);
       events.push({
         type: 'fixture',
         fixture: {
           type: 'national',
-          opp: oppNation,
-          oppName: oppNation,
-          oppStr: 50 + Math.floor(Math.random() * 35),
+          opp: oppTeam.code,
+          oppName: `${oppTeam.flag} ${oppTeam.name}`,
+          oppStr: oppTeam.strength,
           home: Math.random() < 0.5,
           competition: mtInfo.label,
-          round: mtInfo.type === 'wc_qualifier' ? '월드컵 예선' : mtInfo.label,
+          round: isQualifier ? mtInfo.label : '친선',
           date: { ...today }
         }
       });

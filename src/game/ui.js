@@ -1740,7 +1740,9 @@ export function showHighlightModal(highlight, current, total, processChoice, cal
       const outcome = processChoice(idx);
       // 선택지 숨김, 결과 표시
       $('hl-choices').style.display = 'none';
-      const cls = outcome.success ? 'text-good' : 'text-bad';
+      // 색상: 골/어시 실제 발생이면 녹색 / 선택 성공 but 골 미스이면 노랑 / 선택 실패면 빨강
+      const cls = (outcome.goal > 0 || outcome.assist > 0) ? 'text-good' :
+        (outcome.success ? 'text-warn' : 'text-bad');
       $('hl-result').style.display = 'block';
       $('hl-result').innerHTML = `
         <p style="font-size:1.05rem; margin:14px 0; line-height:1.5;" class="${cls}">${escapeHtml(outcome.narrative)}</p>
@@ -1779,9 +1781,9 @@ export function showPostMatchSummary(fixture, result, matchState, callback) {
       <p class="text-muted">${fixture.competition} ${fixture.round ? '· ' + fixture.round : ''}</p>
 
       <div class="match-score" style="font-size:1.5rem;">
-        <span>${fixture.home ? '🏠 우리' : escapeHtml(fixture.oppName)}</span>
+        <span>${fixture.home ? '🏠 우리' : '✈️ 우리'}</span>
         <span class="vs ${cls}">${result.myGoals} <small>vs</small> ${result.oppGoals}</span>
-        <span>${fixture.home ? escapeHtml(fixture.oppName) : '우리 ✈️'}</span>
+        <span>${escapeHtml(fixture.oppName)}</span>
       </div>
 
       <div style="text-align:center; margin:12px 0;">
