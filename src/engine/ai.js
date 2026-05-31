@@ -1,13 +1,13 @@
 /* ================================================================
- *  AI (Anthropic Claude) 클라이언트 + 콘텐츠 프롬프트
+ *  AI (OpenAI) 클라이언트 + 콘텐츠 프롬프트
  *  - 사용자 API 키는 localStorage에 저장
- *  - 브라우저에서 직접 호출 (anthropic-dangerous-direct-browser-access)
+ *  - 브라우저에서 직접 OpenAI Chat Completions 호출
  *  - 키가 없으면 폴백 (템플릿 사용)
  * ================================================================ */
 
-const KEY_STORAGE = 'wfl_anthropic_key';
-const MODEL_STORAGE = 'wfl_anthropic_model';
-const DEFAULT_MODEL = 'claude-haiku-4-5';
+const KEY_STORAGE = 'wfl_openai_key';
+const MODEL_STORAGE = 'wfl_openai_model';
+const DEFAULT_MODEL = 'gpt-4o-mini';
 
 export function setApiKey(key) { localStorage.setItem(KEY_STORAGE, key); }
 export function getApiKey() { return localStorage.getItem(KEY_STORAGE) || ''; }
@@ -16,34 +16,45 @@ export function clearApiKey() { localStorage.removeItem(KEY_STORAGE); }
 export function setModel(m) { localStorage.setItem(MODEL_STORAGE, m); }
 export function getModel() { return localStorage.getItem(MODEL_STORAGE) || DEFAULT_MODEL; }
 
-/* ---------- 저수준 호출 ---------- */
+/* ---------- 저수준 호출 (OpenAI Chat Completions) ---------- */
+// 함수명은 callClaude로 유지 (기존 호출부 호환). 내부는 OpenAI.
 export async function callClaude({ system, prompt, maxTokens = 800, temperature = 0.95 }) {
+  return callAI({ system, prompt, maxTokens, temperature });
+}
+
+export async function callAI({ system, prompt, maxTokens = 800, temperature = 0.95 }) {
   if (!hasApiKey()) return null;
+  const model = getModel();
+  // GPT-5 계열은 max_completion_tokens 사용. 기타 모델은 max_tokens.
+  const useMaxCompletionTokens = /^(gpt-5|o\d|gpt-4\.\d)/i.test(model);
+  const body = {
+    model,
+    temperature,
+    messages: [
+      { role: 'system', content: system || 'You are a helpful assistant.' },
+      { role: 'user', content: prompt }
+    ]
+  };
+  if (useMaxCompletionTokens) body.max_completion_tokens = maxTokens;
+  else body.max_tokens = maxTokens;
+
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    const resp = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'content-type': 'application/json',
-        'x-api-key': getApiKey(),
-        'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getApiKey()}`
       },
-      body: JSON.stringify({
-        model: getModel(),
-        max_tokens: maxTokens,
-        system,
-        temperature,
-        messages: [{ role: 'user', content: prompt }]
-      })
+      body: JSON.stringify(body)
     });
     if (!resp.ok) {
-      console.warn('Claude API error:', resp.status, await resp.text().catch(() => ''));
+      console.warn('OpenAI API error:', resp.status, await resp.text().catch(() => ''));
       return null;
     }
     const data = await resp.json();
-    return data.content?.[0]?.text || null;
+    return data.choices?.[0]?.message?.content || null;
   } catch (e) {
-    console.warn('AI call failed:', e);
+    console.warn('OpenAI call failed:', e);
     return null;
   }
 }

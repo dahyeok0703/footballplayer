@@ -1067,7 +1067,7 @@ function renderSNS() {
           <button class="primary" id="btn-tweet">📤 게시하기</button>
           <span class="hint">다음 주 진행 시 AI/팬 댓글이 달립니다.</span>
         </div>
-        ${!hasApiKey() ? '<p class="hint" style="margin-top:10px;">⚙️ 설정에서 Anthropic API 키 입력 시 더 자연스러운 댓글이 생성됩니다.</p>' : ''}
+        ${!hasApiKey() ? '<p class="hint" style="margin-top:10px;">⚙️ 설정에서 OpenAI API 키 입력 시 더 자연스러운 댓글이 생성됩니다.</p>' : ''}
 
         <h4 style="margin-top:18px;">내 게시물 (${sns.posts.length})</h4>
         ${sns.posts.length === 0 ? '<p class="hint">아직 게시물이 없습니다.</p>' : sns.posts.map(p => `
@@ -1365,25 +1365,27 @@ function renderUpgrade() {
 }
 
 /* ============================================================
- *  설정 뷰 (Anthropic API 키)
+ *  설정 뷰 (OpenAI API 키)
  * ============================================================ */
 function renderSettings() {
   main().innerHTML = `
     <div class="card">
-      <h3>⚙️ 설정 — AI 연동</h3>
-      <p>SNS 댓글, 기자 트윗, 연애 대화에 AI를 사용하려면 Anthropic API 키를 입력하세요.</p>
+      <h3>⚙️ 설정 — AI 연동 (OpenAI)</h3>
+      <p>SNS 댓글, 기자 트윗, 연애 대화, 매치 내러티브에 AI를 사용하려면 OpenAI API 키를 입력하세요.</p>
       <p class="hint">키는 브라우저 localStorage에만 저장되며 서버로 전송되지 않습니다.<br>
-      <a href="https://console.anthropic.com/" target="_blank" style="color:var(--accent-3);">Anthropic Console</a>에서 발급 가능합니다.</p>
+      <a href="https://platform.openai.com/api-keys" target="_blank" style="color:var(--accent-3);">OpenAI Platform</a>에서 발급 가능합니다.</p>
       <label style="display:flex; flex-direction:column; gap:6px; margin-top:14px;">
-        <strong>API Key</strong>
-        <input type="password" id="api-key-input" placeholder="sk-ant-..." value="${getApiKey()}" style="width:100%;">
+        <strong>OpenAI API Key</strong>
+        <input type="password" id="api-key-input" placeholder="sk-..." value="${getApiKey()}" style="width:100%;">
       </label>
       <label style="display:flex; flex-direction:column; gap:6px; margin-top:10px;">
         <strong>모델</strong>
         <select id="api-model-select">
-          <option value="claude-haiku-4-5" ${getModel() === 'claude-haiku-4-5' ? 'selected' : ''}>Claude Haiku 4.5 (빠르고 저렴)</option>
-          <option value="claude-sonnet-4-6" ${getModel() === 'claude-sonnet-4-6' ? 'selected' : ''}>Claude Sonnet 4.6 (균형)</option>
-          <option value="claude-opus-4-7" ${getModel() === 'claude-opus-4-7' ? 'selected' : ''}>Claude Opus 4.7 (최고 품질)</option>
+          <option value="gpt-4o-mini" ${getModel() === 'gpt-4o-mini' ? 'selected' : ''}>GPT-4o mini (빠르고 저렴 — 추천)</option>
+          <option value="gpt-4o" ${getModel() === 'gpt-4o' ? 'selected' : ''}>GPT-4o (균형)</option>
+          <option value="gpt-5-mini" ${getModel() === 'gpt-5-mini' ? 'selected' : ''}>GPT-5 mini (최신, 빠름)</option>
+          <option value="gpt-5" ${getModel() === 'gpt-5' ? 'selected' : ''}>GPT-5 (최신, 최고 품질)</option>
+          <option value="gpt-4.1" ${getModel() === 'gpt-4.1' ? 'selected' : ''}>GPT-4.1 (긴 컨텍스트)</option>
         </select>
       </label>
       <div style="display:flex; gap:8px; margin-top:14px;">
