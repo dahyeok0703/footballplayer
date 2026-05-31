@@ -2197,6 +2197,16 @@ VIEWS.world = function renderWorldV2() {
       ` : ''}
 
       <div class="card wide">
+        <h3>🌱 신규 유망주 클래스 (${s.year} 데뷔)</h3>
+        ${renderRecentWonderkids(s.world, s.year)}
+      </div>
+
+      <div class="card wide">
+        <h3>👋 최근 은퇴한 선수들</h3>
+        ${renderRetiredPlayers(s.world)}
+      </div>
+
+      <div class="card wide">
         <h3>📊 현재 진행 중인 다른 리그 (백그라운드 시뮬)</h3>
         ${renderBgLeagueTables(s.world, s.player.leagueId, s.year)}
       </div>
@@ -2571,4 +2581,55 @@ export function showBackgroundGoalModal(event, scoreInfo, callback) {
     document.body.removeChild(overlay);
     callback && callback();
   };
+}
+
+/* ---------- 신규 유망주 클래스 표시 ---------- */
+function renderRecentWonderkids(world, currentYear) {
+  const wks = (world.recentWonderkids || []).slice(0, 30);
+  if (wks.length === 0) return '<p class="hint">아직 데뷔한 유망주 없음. 매 시즌 종료 시 5~10명의 신규 유망주가 등장합니다.</p>';
+  return `
+    <p class="hint" style="margin-bottom:10px;">매 시즌 빅클럽 유스 아카데미에 합류하는 16~18세 슈퍼 유망주들.</p>
+    <table class="table">
+      <thead><tr><th>데뷔년</th><th>이름</th><th>나이</th><th>포지션</th><th>국적</th><th>클럽</th><th class="num">현 OVR</th><th class="num">잠재력</th></tr></thead>
+      <tbody>
+        ${wks.map(w => `
+          <tr ${w.potential >= 95 ? 'style="background:rgba(244,196,48,0.15);"' : ''}>
+            <td>${w.debutYear || '?'}</td>
+            <td><strong>${escapeHtml(w.name)}</strong>${w.potential >= 97 ? ' 🌟' : (w.potential >= 95 ? ' ⭐' : '')}</td>
+            <td>${w.age}</td>
+            <td>${w.position}</td>
+            <td>${escapeHtml(w.nationality || '?')}</td>
+            <td>${escapeHtml(w.clubName)}</td>
+            <td class="num">${w.ovr}</td>
+            <td class="num" style="color:var(--accent-3); font-weight:bold;">${w.potential}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+/* ---------- 은퇴 선수 명단 ---------- */
+function renderRetiredPlayers(world) {
+  const ret = (world.retiredNotables || []).slice(0, 30);
+  if (ret.length === 0) return '<p class="hint">아직 은퇴한 유명 선수 없음 (시즌 종료마다 자동 갱신).</p>';
+  return `
+    <p class="hint" style="margin-bottom:10px;">OVR 78+ 선수의 은퇴 기록 (최근 30명).</p>
+    <table class="table">
+      <thead><tr><th>년</th><th>이름</th><th>나이</th><th>포지션</th><th>국적</th><th>최종 클럽</th><th class="num">최종 OVR</th></tr></thead>
+      <tbody>
+        ${ret.map(r => `
+          <tr ${r.ovr >= 88 ? 'style="background:rgba(255,215,0,0.10);"' : ''}>
+            <td>${r.year || '?'}</td>
+            <td><strong>${escapeHtml(r.name)}</strong>${r.ovr >= 88 ? ' 👑' : ''}${r.wasReal ? ' ⭐' : ''}</td>
+            <td>${r.age}</td>
+            <td>${r.position}</td>
+            <td>${escapeHtml(r.nationality || '?')}</td>
+            <td>${escapeHtml(r.clubName)}</td>
+            <td class="num">${r.ovr}</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
 }

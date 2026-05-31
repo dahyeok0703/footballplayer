@@ -534,6 +534,26 @@ async function processSeasonEnd() {
       if (offseasonInfo.newDealsCount > 0) {
         game.log_(`📰 NPC 이적시장: ${offseasonInfo.newDealsCount}건 빅딜 (세계 탭 확인)`, 'event');
       }
+      // 유명 선수 은퇴 알림 (톱 OVR 85+만 강조)
+      if (offseasonInfo.aging && offseasonInfo.aging.retiredNotables) {
+        const topRetired = offseasonInfo.aging.retiredNotables.filter(p => p.ovr >= 85).slice(0, 5);
+        for (const r of topRetired) {
+          game.log_(`👋 ${r.name} (${r.age}세 ${r.position}, OVR ${r.ovr}) 은퇴 — ${r.clubName}에서 커리어 마감`, 'event');
+        }
+        if (offseasonInfo.aging.retiredNotables.length > 0) {
+          game.log_(`📜 시즌 은퇴자 총 ${offseasonInfo.aging.retiredCount}명 (유명 ${offseasonInfo.aging.retiredNotables.length}명)`, '');
+        }
+      }
+    }
+    // 신규 유망주 알림 (잠재력 95+만 강조)
+    const wks = game.state.world.recentWonderkids || [];
+    const thisYearWks = wks.filter(w => w.debutYear === seasonResult.report.season);
+    const superWks = thisYearWks.filter(w => w.potential >= 95);
+    for (const w of superWks) {
+      game.log_(`🌟 신규 슈퍼 유망주 등장: ${w.name} (${w.age}세 ${w.position}, 잠재력 ${w.potential}) → ${w.clubName} 입단!`, 'event');
+    }
+    if (thisYearWks.length > 0) {
+      game.log_(`🌱 ${thisYearWks.length}명의 신규 유망주가 빅클럽 유스에 합류`, '');
     }
     if (seasonResult.report.awards && seasonResult.report.awards.length > 0) {
       for (const a of seasonResult.report.awards) {

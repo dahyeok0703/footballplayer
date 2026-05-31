@@ -37,6 +37,7 @@ export function ageNpcPlayers(world) {
   let retiredCount = 0;
   let growthCount = 0;
   let declineCount = 0;
+  const retiredNotables = []; // OVR 78+ 유명 은퇴자
   const allClubs = Object.values(world.clubs).flat();
 
   for (const club of allClubs) {
@@ -63,6 +64,15 @@ export function ageNpcPlayers(world) {
 
       if (Math.random() < retireProb) {
         retiredCount++;
+        // 유명 선수 은퇴는 기록 (월드 뉴스에서 표시)
+        if (p.ovr >= 78) {
+          retiredNotables.push({
+            name: p.name, age: p.age, ovr: p.ovr,
+            position: p.position, clubName: club.name,
+            nationality: p.nationality,
+            wasReal: !!p.real
+          });
+        }
         continue;
       }
 
@@ -101,7 +111,54 @@ export function ageNpcPlayers(world) {
     club.players = newRoster;
   }
 
-  return { retiredCount, growthCount, declineCount };
+  return { retiredCount, growthCount, declineCount, retiredNotables };
+}
+
+/* ============================================================
+ *  신규 유망주 클래스 생성 (매 시즌 5~10명, 톱 클럽 유스에 합류)
+ *  - 16~18세, OVR 60~72, 잠재력 88~99
+ *  - 축구 강국에서 무작위 추출
+ *  - 빅클럽 유스에 자동 입단
+ * ============================================================ */
+const WONDERKID_HOTBEDS = ['BRA','ARG','ESP','FRA','ENG','POR','NED','GER','ITA','URU','CRO','MAR','SEN','EGY','COL','JPN','KOR','CMR','CIV','NGA','GHA','TUR','BEL'];
+
+export function generateWonderkidClass(world, year, count = null) {
+  if (count === null) count = 5 + Math.floor(Math.random() * 6); // 5~10명
+  const wonderkids = [];
+  const topClubs = [];
+  for (const league of LEAGUES) {
+    if (league.strength < 82) continue;
+    const clubs = world.clubs[league.id];
+    if (!clubs) continue;
+    topClubs.push(...clubs.slice(0, 6)); // 톱 6팀 유스 아카데미
+  }
+  if (topClubs.length === 0) return [];
+
+  for (let i = 0; i < count; i++) {
+    const club = topClubs[Math.floor(Math.random() * topClubs.length)];
+    const position = pick(['ST','LW','RW','CAM','CM','CB','GK','LB','RB']);
+    const wonder = generatePlayer({
+      nationality: pick(WONDERKID_HOTBEDS),
+      minOvr: 60, maxOvr: 72,
+      age: rand(16, 18),
+      position,
+      isYouth: true
+    });
+    // 슈퍼 유망주 — 잠재력 88~99 강제
+    wonder.potential = clamp(88 + rand(0, 11), 88, 99);
+    // 99 잠재력은 매년 0~1명만 (메시/야말급 한정)
+    if (wonder.potential === 99 && i > 0) wonder.potential = 94 + rand(0, 4);
+    wonder.value = Math.round(wonder.potential * wonder.potential * (wonder.potential - wonder.ovr + 5) * 0.3);
+    if (!club.players) club.players = [];
+    club.players.push(wonder);
+    wonderkids.push({
+      ...wonder,
+      clubName: club.name,
+      leagueId: club.leagueId,
+      debutYear: year
+    });
+  }
+  return wonderkids;
 }
 
 function makeYouthPlayer(club) {
@@ -516,6 +573,13 @@ export function runOffseasonSim(state, playerLeagueTable) {
 
   // 4. NPC 노화/은퇴/성장
   const aging = ageNpcPlayers(world);
+
+  // 4.5. 신규 유망주 클래스 (매 시즌 5~10명, 톱 클럽 유스 합류)
+  const wonderkids = generateWonderkidClass(world, state.year);
+  world.retiredNotables = world.retiredNotables || [];
+  world.retiredNotables = [...(aging.retiredNotables || []).map(p => ({ ...p, year: state.year - 1 })), ...world.retiredNotables].slice(0, 100);
+  world.recentWonderkids = world.recentWonderkids || [];
+  world.recentWonderkids = [...wonderkids, ...world.recentWonderkids].slice(0, 50);
 
   // 5. 직전 시즌 어워드
   if (!world.seasonAwards) world.seasonAwards = {};
