@@ -399,16 +399,28 @@ export function applyPerMatchGrowth(state, fixture, result) {
   const player = state.player;
   const age = player.age;
   const r = result.rating;
-  const ageFactor = age < 21 ? 1.6 : (age < 25 ? 1.2 : (age < 29 ? 1.0 : (age < 33 ? 0.5 : 0.2)));
+  const ageFactor = age < 21 ? 1.5 : (age < 25 ? 1.1 : (age < 29 ? 0.8 : (age < 33 ? 0.4 : 0.15)));
 
+  // 빅매치 보너스 (UCL/월드컵/결승 활약은 추가 경험치)
+  const isBigGame = (fixture.type === 'continental' || fixture.type === 'national' ||
+    (fixture.type === 'cup' && ['결승', '준결승'].includes(fixture.round)));
+  const bigGameBonus = isBigGame ? 1.5 : 1.0;
+
+  // 평점별 확률 기반 (이전엔 무조건 +1~+3, 너무 빠른 성장)
   let pointsToAllocate = 0;
-  if (r >= 9.0) pointsToAllocate = 3;
-  else if (r >= 8.0) pointsToAllocate = 2;
-  else if (r >= 7.0) pointsToAllocate = 1;
-  else if (r >= 6.0 && Math.random() < 0.3) pointsToAllocate = 1;
-  else if (r < 5.0) pointsToAllocate = -1;
+  if (r >= 9.5 && Math.random() < 0.85) pointsToAllocate = 1;       // 압도적 → 확정
+  else if (r >= 9.0 && Math.random() < 0.6) pointsToAllocate = 1;   // 환상적 → 60%
+  else if (r >= 8.5 && Math.random() < 0.40) pointsToAllocate = 1;  // 매우 좋음 → 40%
+  else if (r >= 8.0 && Math.random() < 0.25) pointsToAllocate = 1;  // 좋음 → 25%
+  else if (r >= 7.5 && Math.random() < 0.12) pointsToAllocate = 1;  // 보통 위 → 12%
+  else if (r >= 7.0 && Math.random() < 0.05) pointsToAllocate = 1;  // 보통 → 5%
+  else if (r < 4.5 && Math.random() < 0.25) pointsToAllocate = -1;  // 형편없음 → 능력치 하락
 
-  pointsToAllocate = Math.round(pointsToAllocate * ageFactor);
+  // 빅매치 9점+ 활약은 추가 +1 (절대적 활약 보상)
+  if (isBigGame && r >= 9.0 && Math.random() < 0.5) pointsToAllocate += 1;
+
+  // 나이 보정
+  pointsToAllocate = Math.round(pointsToAllocate * ageFactor * bigGameBonus);
   if (pointsToAllocate === 0) return [];
 
   // 포지션 스탯에 무작위 분배

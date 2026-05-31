@@ -322,13 +322,26 @@ export function applyTraining(player, trainAlloc, intensity = 'normal') {
   const ovr = calcOVR(player);
   const potentialGap = player.potential - ovr;
 
+  // 누적 부분 점수 (정수가 될 때만 능력치 +1)
+  player.statProgress = player.statProgress || {};
+
   for (const [stat, pts] of Object.entries(trainAlloc)) {
     if (pts === 0) continue;
     const gapFactor = clamp(potentialGap / 25, 0.1, 1.5);
-    const gain = pts * ageFactor * talentFactor * gapFactor * intDef.gainMul * (0.3 + Math.random() * 0.4);
-    const before = player.stats[stat];
-    player.stats[stat] = clamp(Math.round(before + gain), 1, 99);
-    if (player.stats[stat] > player.potential + 5) player.stats[stat] = player.potential + 5;
+    // 매우 축소된 게인: 평균적으로 2~3주에 +1 능력치 (현실 반영)
+    const gain = pts * ageFactor * talentFactor * gapFactor * intDef.gainMul * 0.04 * (0.5 + Math.random() * 0.5);
+    player.statProgress[stat] = (player.statProgress[stat] || 0) + gain;
+    // 1 이상 누적되면 능력치 상승
+    while (player.statProgress[stat] >= 1) {
+      const before = player.stats[stat];
+      const ceiling = Math.min(99, player.potential + 5);
+      if (before >= ceiling) {
+        player.statProgress[stat] = 0;
+        break;
+      }
+      player.stats[stat] = before + 1;
+      player.statProgress[stat] -= 1;
+    }
   }
 
   // 피로/사기/부상 효과

@@ -137,20 +137,22 @@ export function generateSeasonAwards(world, year) {
     }
     if (allPlayers.length === 0) continue;
 
-    // 득점왕 (FW + CAM 우선, OVR×슈팅 스타일로)
+    // 득점왕 — 현실 분포 (EPL 톱: 28~36, 변방 리그: 18~25)
+    // OVR 90 = ~25골, OVR 85 = ~18골, OVR 80 = ~13골
     const scorerCandidates = allPlayers.filter(p => ['FW','MF'].includes(groupOf(p.position)));
     scorerCandidates.sort((a, b) => b.ovr - a.ovr);
     const topScorers = scorerCandidates.slice(0, 5).map((p, i) => ({
       ...p,
-      goals: Math.max(5, Math.round(((p.ovr - 60) * 0.8 + 12) - i * 2 + rand(-3, 5)))
+      goals: Math.max(4, Math.round((p.ovr - 70) * 0.55 + 14 - i * 1.5 + rand(-3, 4)))
     }));
 
-    // 도움왕 (MF + 일부 FW)
+    // 도움왕 — 현실 분포 (EPL 역대 최고 21, 보통 톱 12~18)
+    // OVR 90 = ~16어시, OVR 85 = ~13, OVR 80 = ~10
     const assistCandidates = allPlayers.filter(p => ['MF','FW'].includes(groupOf(p.position)));
     assistCandidates.sort((a, b) => b.ovr - a.ovr);
     const topAssists = assistCandidates.slice(0, 5).map((p, i) => ({
       ...p,
-      assists: Math.max(3, Math.round(((p.ovr - 60) * 0.6 + 9) - i + rand(-2, 4)))
+      assists: Math.max(3, Math.round((p.ovr - 70) * 0.32 + 10 - i + rand(-2, 3)))
     }));
 
     // 평점왕 (전체)

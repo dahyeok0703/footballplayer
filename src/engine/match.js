@@ -28,17 +28,37 @@ export const ROLES = [
   { id: 'free_role',     name: '자유 역할',    desc: '균형 잡힌 다재다능',           attackingBonus: 0,  statBoost: null }
 ];
 
-/* ---------- 하이라이트 선택 (5~10개) ---------- */
+/* ---------- 하이라이트 수 결정 (리그/팀 수준 기반 3~10개) ---------- */
+export function getHighlightCount(player, fixture) {
+  const teamStr = player.clubStrength || 70;
+  const oppStr = fixture.oppStr || 70;
+  const myLeagueStr = (fixture.competition && fixture.competition.length > 0) ? teamStr : 70;
+  const strDiff = teamStr - oppStr;
+  // 기본 5 — 강도 차이로 ±
+  let count = 5;
+  if (strDiff > 18) count = 9;       // 압도적 우세
+  else if (strDiff > 10) count = 7;
+  else if (strDiff > 3) count = 6;
+  else if (strDiff > -3) count = 5;
+  else if (strDiff > -10) count = 4;
+  else count = 3;                     // 압도당하는 상황 (기회 적음)
+  // 빅 매치/대륙간 결승은 +1
+  if (fixture.type === 'continental' && ['결승', '준결승'].includes(fixture.round)) count++;
+  if (fixture.type === 'cup' && fixture.round === '결승') count++;
+  // 무작위 ±1
+  count += Math.floor(Math.random() * 3) - 1;
+  return clamp(count, 3, 10);
+}
+
+/* ---------- 하이라이트 선택 (가변 3~10개) ---------- */
 export function selectHighlights(player, fixture, role) {
   const grp = groupOf(player.position);
   const positions = [grp, player.position, 'ALL'];
-  // 포지션 매칭되는 템플릿 필터
   const candidates = HIGHLIGHT_TEMPLATES.filter(t =>
     t.positions.some(p => positions.includes(p))
   );
-  // 가중치 기반 무작위 추출
   const total = candidates.reduce((s, c) => s + (c.weight || 5), 0);
-  const numHighlights = 5 + Math.floor(Math.random() * 6); // 5-10
+  const numHighlights = getHighlightCount(player, fixture);
   const selected = [];
   const usedIds = new Set();
 
@@ -117,14 +137,18 @@ export function initMatchState(fixture, tactic, role) {
     ratingPoints: 60, // 60 = 평점 6.0 기준
     playerGoals: 0,
     playerAssists: 0,
-    teamGoalsExtra: 0, // 본인 외 팀골
-    oppGoals: 0,
-    fanReaction: 50, // 0~100
+    teamAmbientGoals: 0, // 동료들 골 (시뮬에서 결정)
+    oppCounterGoals: 0,  // 본인 실수로 허용한 골
+    oppAmbientGoals: 0,  // 상대 자연 골
+    runningTeamScore: 0, // 실시간 우리팀 점수 (하이라이트 진행 중)
+    runningOppScore: 0,  // 실시간 상대 점수
+    fanReaction: 50,
     coachTrust: 50,
     keyMoments: [],
-    log: [], // 모든 narrative
+    log: [],
     injury: 0,
-    counterAllowed: 0
+    pendingAmbientPool: 0, // 남은 동료 골 (분배 대기)
+    pendingOppPool: 0      // 남은 상대 골 (분배 대기)
   };
 }
 
@@ -134,14 +158,17 @@ export function applyHighlightOutcome(matchState, outcome) {
   matchState.ratingPoints += outcome.rating;
   matchState.fanReaction = clamp(matchState.fanReaction + outcome.fan, 0, 100);
   if (outcome.goal) {
-    // goal이 1이면 확실, 0.5/0.7이면 확률
     if (Math.random() < outcome.goal) {
       matchState.playerGoals++;
+      matchState.runningTeamScore++; // 즉시 점수판 반영
+      outcome.scoredNow = true;
     }
   }
   if (outcome.assist) {
     if (Math.random() < outcome.assist) {
       matchState.playerAssists++;
+      matchState.runningTeamScore++; // 어시 → 동료 골
+      outcome.assistNow = true;
     }
   }
   if (outcome.keyMoment) {
@@ -153,9 +180,11 @@ export function applyHighlightOutcome(matchState, outcome) {
     });
   }
   matchState.log.push(outcome);
-  // 상대 역습 확률 → 상대 골
+  // 상대 역습 → 상대 골
   if (outcome.oppCounter && Math.random() < outcome.oppCounter) {
-    matchState.oppGoals++;
+    matchState.oppCounterGoals++;
+    matchState.runningOppScore++;
+    outcome.oppScoredNow = true;
     matchState.log.push({
       minute: outcome.minute,
       narrative: `${outcome.minute}' 역습 허용! 상대가 골 성공.`,
@@ -170,20 +199,74 @@ export function applyHighlightOutcome(matchState, outcome) {
   }
 }
 
-/* ---------- 매치 마무리 (점수, 평점, 결과 종합) ---------- */
-export function finalizeMatch(player, fixture, matchState) {
+/* ---------- 매치 사전 시뮬: 동료/상대 배경 골 풀 ---------- */
+export function prepareAmbientGoals(player, fixture, matchState) {
   const myOvr = calcOVR(player);
   const oppStr = fixture.oppStr || 70;
-  // 팀 기반 추가 골 (본인 골 외): 팀 강도 vs 상대 차이로 결정
   const teamStr = (myOvr + (player.clubStrength || myOvr)) / 2;
-  const teamGoalsExtra = simExtraGoals(teamStr, oppStr) - Math.min(2, matchState.playerGoals + matchState.playerAssists);
-  matchState.teamGoalsExtra = Math.max(0, teamGoalsExtra);
-  // 상대 추가 골 (이미 oppCounter로 더해졌지만 베이스도 있어야)
-  const oppBaseGoals = simExtraGoals(oppStr, teamStr);
-  matchState.oppGoals += oppBaseGoals;
+  const homeBoost = fixture.home ? 3 : -2;
 
-  const myGoals = matchState.playerGoals + matchState.teamGoalsExtra;
-  const result = myGoals > matchState.oppGoals ? 'W' : (myGoals < matchState.oppGoals ? 'L' : 'D');
+  // 람다(평균 골) — 본인 외 동료들이 만들어내는 골 + 상대 자연 골
+  const teamLambda = clamp((teamStr + homeBoost - oppStr) * 0.045 + 1.3, 0.3, 3.5);
+  const oppLambda = clamp((oppStr - teamStr - homeBoost) * 0.045 + 1.1, 0.3, 3.5);
+
+  matchState.pendingAmbientPool = poisson(teamLambda);
+  matchState.pendingOppPool = poisson(oppLambda);
+}
+
+function poisson(lambda) {
+  let g = 0, p = Math.exp(-lambda), s = p;
+  const r = Math.random();
+  while (r > s && g < 6) { g++; p = p * lambda / g; s += p; }
+  return g;
+}
+
+/* ---------- 하이라이트 사이 배경 골 분배 (확률적) ---------- */
+export function maybeBackgroundGoal(matchState, currentMinute) {
+  // 남은 풀에서 확률적으로 발생
+  const ratio = currentMinute / 90;
+  // 약 70% 확률로 시간 진행에 따라 분배
+  const events = [];
+  if (matchState.pendingAmbientPool > 0 && Math.random() < 0.35) {
+    matchState.pendingAmbientPool--;
+    matchState.teamAmbientGoals++;
+    matchState.runningTeamScore++;
+    events.push({ type: 'team_ambient', minute: currentMinute, narrative: '⚽ 동료가 골을 넣었습니다!' });
+  }
+  if (matchState.pendingOppPool > 0 && Math.random() < 0.32) {
+    matchState.pendingOppPool--;
+    matchState.oppAmbientGoals++;
+    matchState.runningOppScore++;
+    events.push({ type: 'opp_ambient', minute: currentMinute, narrative: '😞 상대팀이 골을 넣었습니다!' });
+  }
+  return events;
+}
+
+/* ---------- 매치 종료 직전: 남은 풀 모두 소진 ---------- */
+export function flushRemainingGoals(matchState) {
+  const events = [];
+  while (matchState.pendingAmbientPool > 0) {
+    matchState.pendingAmbientPool--;
+    matchState.teamAmbientGoals++;
+    matchState.runningTeamScore++;
+    events.push({ type: 'team_ambient', minute: 85 + Math.floor(Math.random() * 5), narrative: '⚽ 동료의 막판 골!' });
+  }
+  while (matchState.pendingOppPool > 0) {
+    matchState.pendingOppPool--;
+    matchState.oppAmbientGoals++;
+    matchState.runningOppScore++;
+    events.push({ type: 'opp_ambient', minute: 85 + Math.floor(Math.random() * 5), narrative: '😞 상대 막판 골!' });
+  }
+  return events;
+}
+
+/* ---------- 매치 마무리 (점수, 평점, 결과 종합) ---------- */
+export function finalizeMatch(player, fixture, matchState) {
+  // 점수 = runningTeamScore (본인 골/어시 + 동료 배경 골 누적)
+  // 상대 = runningOppScore (oppCounter + 상대 배경 골)
+  const myGoals = matchState.runningTeamScore;
+  const oppGoals = matchState.runningOppScore;
+  const result = myGoals > oppGoals ? 'W' : (myGoals < oppGoals ? 'L' : 'D');
 
   // 평점 산정 (0~100 → 1~10)
   let ratingPoints = matchState.ratingPoints;
@@ -198,7 +281,7 @@ export function finalizeMatch(player, fixture, matchState) {
   const pressKey = rating >= 8 ? 'pressExcellent' : rating >= 7 ? 'pressGood' : rating >= 5.5 ? 'pressOk' : 'pressBad';
 
   return {
-    myGoals, oppGoals: matchState.oppGoals, result, rating,
+    myGoals, oppGoals, result, rating,
     goals: matchState.playerGoals,
     assists: matchState.playerAssists,
     injury: matchState.injury,

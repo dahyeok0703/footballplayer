@@ -455,9 +455,19 @@ function shortenCompName(name) {
 function renderPlayer() {
   const s = game.state;
   const p = s.player;
+  if (!p) {
+    main().innerHTML = '<div class="card"><p class="hint">선수 데이터 없음. 새 커리어를 시작하세요.</p></div>';
+    return;
+  }
+  // 필수 필드 안전 초기화
+  p.careerStats = p.careerStats || { matches: 0, goals: 0, assists: 0, leagueMatches: 0, leagueGoals: 0, cupMatches: 0, cupGoals: 0, contMatches: 0, contGoals: 0, natMatches: 0, natGoals: 0 };
+  p.history = p.history || [];
+  p.traits = p.traits || [];
+  p.appearance = p.appearance || { hairStyle: '단정', hairColor: '검정', skin: '중간', tattoo: '없음' };
   const ovr = calcOVR(p);
-
-  main().innerHTML = `
+  let mainHtml;
+  try {
+    mainHtml = `
     <div class="grid cols-2">
       <div class="card">
         <h3>${p.name} <small class="text-muted">${p.position} · ${p.nationality} · ${p.foot}</small></h3>
@@ -523,11 +533,17 @@ function renderPlayer() {
       </div>
     </div>
   `;
+  } catch (e) {
+    console.error('renderPlayer 오류:', e);
+    mainHtml = `<div class="card"><h3>선수 정보 표시 오류</h3><p class="text-bad">${escapeHtml(e.message)}</p><p class="hint">콘솔 확인 후 새로고침 권장.</p></div>`;
+  }
+  main().innerHTML = mainHtml;
   const jerseyBtn = $('btn-jersey-change');
   if (jerseyBtn) jerseyBtn.onclick = () => showJerseyChangeModal();
   const appearBtn = $('btn-appearance-change');
   if (appearBtn) appearBtn.onclick = () => showAppearanceModal();
-  $('btn-retire').onclick = () => {
+  const retireBtn = $('btn-retire');
+  if (retireBtn) retireBtn.onclick = () => {
     if (confirm('정말로 은퇴하시겠습니까? 이후 게임을 재시작해야 합니다.')) {
       game.retire();
       renderEnd();
@@ -1688,15 +1704,16 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
   };
 }
 
-/* 하이라이트 모달 — 선택지 클릭 시 한 모달 안에서 결과까지 보여줌 */
-export function showHighlightModal(highlight, current, total, processChoice, callback) {
+/* 하이라이트 모달 — 한 모달에서 선택→결과. 남은 하이라이트 수는 숨김(긴장감). 실시간 점수 표시. */
+export function showHighlightModal(highlight, current, total, processChoice, callback, scoreInfo) {
   const overlay = document.createElement('div');
   overlay.id = 'modal-overlay';
+  const scoreLine = scoreInfo ? `<span style="font-size:1.1rem; color:var(--accent-2); font-weight:bold;">${scoreInfo.team} ${scoreInfo.teamScore} - ${scoreInfo.oppScore} ${scoreInfo.opp}</span>` : '';
   overlay.innerHTML = `
     <div class="modal-content" style="max-width:580px;">
       <div style="display:flex; justify-content:space-between; align-items:center;">
-        <h3>🎬 하이라이트 ${current}/${total}</h3>
-        <span class="text-muted">${highlight.minute}'</span>
+        <h3>🎬 ${highlight.minute}'</h3>
+        ${scoreLine}
       </div>
       <p style="font-size:1.05rem; margin:12px 0; line-height:1.5;">${escapeHtml(highlight.text)}</p>
       <div id="hl-choices" style="display:flex; flex-direction:column; gap:8px; margin-top:10px;">
@@ -2201,8 +2218,9 @@ VIEWS.world = function renderWorldV2() {
 /* ---------- 내 선수 뷰에 라이벌 섹션 추가 (필요시 호출) ---------- */
 export function renderRivalsSection() {
   const s = game.state;
-  const rivals = (s.world && s.world.rivals) || [];
-  if (rivals.length === 0) return '';
+  if (!s || !s.world) return '';
+  const rivals = s.world.rivals || [];
+  if (rivals.length === 0) return '<div class="card wide"><h3>⚔️ 라이벌</h3><p class="hint">시즌 종료 시 동시대 라이벌 톱 10이 자동 표시됩니다.</p></div>';
   return `
     <div class="card wide">
       <h3>⚔️ 같은 포지션 라이벌 / 경쟁자 (톱 10)</h3>
@@ -2527,4 +2545,26 @@ function showJerseyChangeModal() {
     };
     document.getElementById('jersey-cancel').onclick = () => document.body.removeChild(overlay);
   }
+}
+
+/* ---------- 배경 골 알림 모달 (선택지 없이 정보만) ---------- */
+export function showBackgroundGoalModal(event, scoreInfo, callback) {
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  const isOurs = event.type === 'team_ambient';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:440px; text-align:center;
+      background: linear-gradient(135deg, var(--card) 0%, ${isOurs ? 'rgba(0,217,126,0.1)' : 'rgba(230,57,70,0.1)'} 100%);
+      border: 2px solid ${isOurs ? 'var(--accent)' : 'var(--danger)'};">
+      <p style="font-size:2.5rem; line-height:1; margin:8px 0;">${isOurs ? '⚽' : '😞'}</p>
+      <h3 style="color:${isOurs ? 'var(--accent)' : 'var(--danger)'}; margin:8px 0;">${event.minute}' — ${escapeHtml(event.narrative)}</h3>
+      ${scoreInfo ? `<p style="font-size:1.4rem; margin:12px 0; font-weight:bold; color:var(--accent-2);">${scoreInfo.team} ${scoreInfo.teamScore} - ${scoreInfo.oppScore} ${scoreInfo.opp}</p>` : ''}
+      <div class="actions"><button class="primary" id="bg-goal-next">계속 ▶</button></div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  document.getElementById('bg-goal-next').onclick = () => {
+    document.body.removeChild(overlay);
+    callback && callback();
+  };
 }

@@ -9,9 +9,9 @@ import { applyPerMatchGrowth } from './engine/social.js';
 import { dateLabel, addDays } from './engine/calendar.js';
 import { getContinentalCup, getPrimaryCup, getDomesticCups } from './data/cups.js';
 import { uid, pick, rand, chance } from './engine/generator.js';
-import { selectHighlights, evaluateChoice, initMatchState, applyHighlightOutcome, finalizeMatch } from './engine/match.js';
+import { selectHighlights, evaluateChoice, initMatchState, applyHighlightOutcome, finalizeMatch, prepareAmbientGoals, maybeBackgroundGoal, flushRemainingGoals } from './engine/match.js';
 import { generateMatchNarrative, hasApiKey } from './engine/ai.js';
-import { showChampionshipModal, showRelegationModal } from './game/ui.js';
+import { showChampionshipModal, showRelegationModal, showBackgroundGoalModal } from './game/ui.js';
 
 let busy = false;
 
@@ -106,10 +106,10 @@ async function processFixture(fixture) {
   }
   const { tactic, role, status, isSubstitute } = preMatch;
 
-  // ----- 경기 중: 하이라이트 시퀀스 (교체 출전이면 2-3개만) -----
+  // ----- 경기 중: 하이라이트 시퀀스 (가변 3~10개, 교체 출전이면 2-3개만) -----
   let highlights = selectHighlights(s.player, fixture, role);
   if (isSubstitute) {
-    highlights = highlights.slice(-3); // 후반 2-3개만 (대략 60-90분)
+    highlights = highlights.slice(-3);
   }
   const matchState = initMatchState(fixture, tactic, role);
 
@@ -123,18 +123,43 @@ async function processFixture(fixture) {
   // 교체 출전이면 평점 시작점 -3 (출전 시간 적음)
   if (isSubstitute) matchState.ratingPoints -= 3;
 
+  // 배경 골 풀 준비 (동료들 골, 상대 자연 골 사전 시뮬)
+  prepareAmbientGoals(s.player, fixture, matchState);
+
+  // 매치 정보 (실시간 점수)
+  const teamLabel = fixture.home ? '우리' : (fixture.oppName || '상대').slice(0, 4);
+  const oppLabel = fixture.home ? (fixture.oppName || '상대').slice(0, 4) : '우리';
+  const buildScoreInfo = () => ({
+    team: fixture.home ? '🏠 ' + teamLabel : '✈️ ' + teamLabel,
+    opp: fixture.home ? (fixture.oppName || '상대').slice(0, 8) : '🏠 ' + (fixture.oppName || '상대').slice(0, 8),
+    teamScore: fixture.home ? matchState.runningTeamScore : matchState.runningOppScore,
+    oppScore: fixture.home ? matchState.runningOppScore : matchState.runningTeamScore
+  });
+
   for (let i = 0; i < highlights.length; i++) {
     const hl = highlights[i];
-    // 한 모달 안에서 선택 → 결과 → "계속" 흐름
+    // 하이라이트 사이에 배경 골 확률 발생 (하이라이트 분 이전에 일어났다는 설정)
+    const bgEvents = maybeBackgroundGoal(matchState, Math.max(1, hl.minute - 5));
+    for (const ev of bgEvents) {
+      await new Promise(res => showBackgroundGoalModal(ev, buildScoreInfo(), res));
+    }
+    // 하이라이트 처리 (실시간 점수 함께 표시)
     await new Promise(res => showHighlightModal(hl, i + 1, highlights.length,
       (choiceIdx) => {
         const outcome = evaluateChoice(s.player, hl, choiceIdx, tactic, role, matchState);
         applyHighlightOutcome(matchState, outcome);
         return outcome;
       },
-      res
+      res,
+      buildScoreInfo()
     ));
-    if (matchState.injury) break; // 부상이면 조기 종료
+    if (matchState.injury) break;
+  }
+
+  // 남은 배경 골 모두 소진 (막판 골)
+  const finalBgEvents = flushRemainingGoals(matchState);
+  for (const ev of finalBgEvents) {
+    await new Promise(res => showBackgroundGoalModal(ev, buildScoreInfo(), res));
   }
 
   // ----- 경기 마무리 -----
