@@ -301,10 +301,8 @@ export const game = {
     player.careerStats.natGoals += ss.natGoals;
     player.history.push(seasonReport);
 
-    // 승강
-    let promoted = false, relegated = false;
-    if (myLeague.relegatesTo && myRank > myLeague.size - 3) relegated = true;
-    if (myLeague.promotesTo && myRank <= 2 && myLeague.tier > 1) promoted = true;
+    // 승강은 runOffseasonSim의 processPromotionRelegation이 모두 담당
+    // (실제 테이블 기반 자동 처리)
 
     // 노화 적용
     player.age++;
@@ -325,9 +323,30 @@ export const game = {
       seasonReport.newTraits = newTraits.map(id => getTrait(id)).filter(Boolean);
     }
 
-    // 세계 시뮬: NPC 노화/은퇴/성장, 시즌 어워드, 빅딜, 랭킹, 라이벌
-    const offseason = runOffseasonSim(s);
+    // 세계 시뮬: 승강 처리 + NPC 이적 + 노화 + 어워드 + 랭킹
+    // 본인 리그 실제 테이블을 함께 전달 (정확한 순위로 강등 결정)
+    const playerLeagueTable = {
+      leagueId: myLeague.id,
+      sorted: tableArr.map(t => ({ id: t.id, pts: t.pts }))
+    };
+    const offseason = runOffseasonSim(s, playerLeagueTable);
     seasonReport.offseason = offseason;
+
+    // 본인 클럽이 승강된 경우 player.leagueId 자동 업데이트
+    seasonReport.userPromoted = false;
+    seasonReport.userRelegated = false;
+    if (offseason.promotionRelegation && offseason.promotionRelegation.userMoved) {
+      const oldLeague = myLeague;
+      const newLeagueId = offseason.promotionRelegation.userNewLeagueId;
+      const newLeagueObj = getLeague(newLeagueId);
+      if (newLeagueObj) {
+        // 승격 = 새 리그 tier가 더 낮음 (tier 1이 더 상위), 강등 = 새 리그 tier가 더 높음
+        if (newLeagueObj.tier < oldLeague.tier) seasonReport.userPromoted = true;
+        else if (newLeagueObj.tier > oldLeague.tier) seasonReport.userRelegated = true;
+        player.leagueId = newLeagueId;
+        player.country = newLeagueObj.country;
+      }
+    }
 
     // 이적 오퍼는 이적시장(여름/겨울)에 분산 도착함 — 시즌 종료 시 자동 생성 안 함
     // 기존 미수락 오퍼는 유지 (계속 협상 가능)
@@ -338,17 +357,6 @@ export const game = {
         o.id = `eosof_${s.year}_${i}`;
         s.offers.push(o);
       });
-    }
-
-    // 자동 승강 처리 (선수 따라감)
-    if (promoted) {
-      const newLeagueId = myLeague.promotesTo;
-      player.leagueId = newLeagueId;
-      player.country = getLeague(newLeagueId).country;
-    } else if (relegated) {
-      const newLeagueId = myLeague.relegatesTo;
-      player.leagueId = newLeagueId;
-      player.country = getLeague(newLeagueId).country;
     }
 
     // 임대 만료 처리 — 모 클럽 복귀 + 갱신 오퍼 가능성
@@ -420,7 +428,8 @@ export const game = {
       bonus,
       cupResults,
       natTrophy,
-      promoted, relegated,
+      promoted: seasonReport.userPromoted,
+      relegated: seasonReport.userRelegated,
       ballonDor: player.trophies.some(t => t.season === s.year - 1 && t.name === '발롱도르')
     };
   },

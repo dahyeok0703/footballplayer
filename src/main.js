@@ -374,8 +374,18 @@ async function processSeasonEnd() {
     }
     if (seasonResult.natTrophy) game.log_(`🥇 ${seasonResult.natTrophy.name}`, 'event');
     if (seasonResult.ballonDor) game.log_(`🏅 발롱도르 수상!`, 'event');
-    if (seasonResult.promoted) game.log_(`⬆️ 승격!`, 'good');
-    if (seasonResult.relegated) game.log_(`⬇️ 강등...`, 'bad');
+    if (seasonResult.promoted) game.log_(`⬆️ 본인 클럽 승격!`, 'good');
+    if (seasonResult.relegated) game.log_(`⬇️ 본인 클럽 강등...`, 'bad');
+    // 세계 승강 결과 요약 로그
+    const offseasonInfo = seasonResult.report.offseason;
+    if (offseasonInfo) {
+      if (offseasonInfo.promotionRelegation && offseasonInfo.promotionRelegation.movements.length > 0) {
+        game.log_(`🔄 세계 승강: ${offseasonInfo.promotionRelegation.movements.length}개 리그 교체 완료`, 'event');
+      }
+      if (offseasonInfo.newDealsCount > 0) {
+        game.log_(`📰 NPC 이적시장: ${offseasonInfo.newDealsCount}건 빅딜 (세계 탭 확인)`, 'event');
+      }
+    }
     if (seasonResult.report.awards && seasonResult.report.awards.length > 0) {
       seasonResult.report.awards.forEach(a => game.log_(`🏅 개인상: ${a.name}`, 'event'));
     }

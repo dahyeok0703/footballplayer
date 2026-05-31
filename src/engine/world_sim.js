@@ -8,6 +8,7 @@ import { LEAGUES, getLeague } from '../data/world.js';
 import { groupOf } from './sim.js';
 import { generateClubRoster, generatePlayer, maxOvrForClub, maxPotentialForClub } from './generator.js';
 import { NAME_POOLS, POOL_BY_CODE } from '../data/world.js';
+import { CLUB_STRENGTH_OVERRIDES } from '../data/club_strengths.js';
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
@@ -296,33 +297,228 @@ export function simulateBallonDor(world, year, ownersWonAlready) {
 }
 
 /* ============================================================
+ *  승강 시스템 — 시즌 종료 자동 처리
+ *  - 본인 리그 결과는 실제 테이블 사용
+ *  - 다른 리그는 강도+무작위로 시뮬
+ *  - 강등 3팀 ↔ 승격 3팀 (또는 2팀) 교체
+ *  - 클럽의 leagueId 직접 업데이트 + world.clubs 배열 재배치
+ *  - 강등된 클럽: 강도 -3 (분위기 다운) / 승격: 강도 +2 (탄력)
+ * ============================================================ */
+export function processPromotionRelegation(world, userClubId, playerLeagueTable) {
+  const movements = [];
+  let userMoved = false;
+  let userNewLeagueId = null;
+
+  for (const league of LEAGUES) {
+    if (!league.relegatesTo) continue;
+    const clubs = world.clubs[league.id];
+    if (!clubs) continue;
+    const lowerLeague = LEAGUES.find(l => l.id === league.relegatesTo);
+    if (!lowerLeague) continue;
+    const lowerClubs = world.clubs[lowerLeague.id];
+    if (!lowerClubs) continue;
+
+    // 승강 슬롯 수 (보통 3개, 작은 리그는 2)
+    const slotCount = clubs.length >= 18 ? 3 : 2;
+
+    // 본인 리그면 실제 테이블 사용, 아니면 강도+노이즈로 가상 순위
+    let standings;
+    if (playerLeagueTable && league.id === playerLeagueTable.leagueId) {
+      standings = playerLeagueTable.sorted; // 본인 리그 실제 결과
+    } else {
+      standings = clubs.map(c => ({ id: c.id, pts: c.strength + Math.round(Math.random() * 15) }))
+        .sort((a, b) => b.pts - a.pts);
+    }
+
+    // 하위 X팀 강등 (강도 순위 가장 낮은)
+    const relegatedIds = new Set(standings.slice(-slotCount).map(t => t.id));
+    const relegated = clubs.filter(c => relegatedIds.has(c.id));
+
+    // 하위 리그 상위 X팀 승격
+    const lowerStandings = lowerClubs.map(c => ({ id: c.id, pts: c.strength + Math.round(Math.random() * 15) }))
+      .sort((a, b) => b.pts - a.pts);
+    const promotedIds = new Set(lowerStandings.slice(0, slotCount).map(t => t.id));
+    const promoted = lowerClubs.filter(c => promotedIds.has(c.id));
+
+    // 클럽 이동 + 강도 조정
+    relegated.forEach(c => {
+      c.leagueId = lowerLeague.id;
+      c.strength = Math.max(40, c.strength - 3); // 강등 후 강도 감소
+      if (c.id === userClubId) { userMoved = true; userNewLeagueId = lowerLeague.id; }
+    });
+    promoted.forEach(c => {
+      c.leagueId = league.id;
+      c.strength = Math.min(99, c.strength + 2); // 승격 후 강도 증가
+      if (c.id === userClubId) { userMoved = true; userNewLeagueId = league.id; }
+    });
+
+    world.clubs[league.id] = clubs.filter(c => !relegatedIds.has(c.id)).concat(promoted);
+    world.clubs[lowerLeague.id] = lowerClubs.filter(c => !promotedIds.has(c.id)).concat(relegated);
+
+    if (relegated.length + promoted.length > 0) {
+      movements.push({
+        leagueId: league.id,
+        leagueName: league.name,
+        relegated: relegated.map(c => c.name),
+        promoted: promoted.map(c => c.name)
+      });
+    }
+  }
+  return { userMoved, userNewLeagueId, movements };
+}
+
+/* ============================================================
+ *  강화된 NPC 이적 시뮬
+ *  - 재정 규모 (budget) 기반
+ *  - 빅클럽: 작은 클럽의 톱 선수 영입
+ *  - 작은 클럽: 빅클럽 백업 영입
+ *  - 포지션 필요도 반영 (같은 포지션 5명 이상 시 안 삼)
+ *  - 실제 스타(REAL_SQUADS의 real=true)는 빅 → 빅 이동만 가능
+ * ============================================================ */
+export function simulateNpcTransferMarket(world, year) {
+  const news = [];
+  // 모든 클럽을 강도순 정렬
+  const allClubs = [];
+  LEAGUES.forEach(l => {
+    const cs = world.clubs[l.id];
+    if (!cs) return;
+    cs.forEach(c => {
+      if (c.players) allClubs.push(c);
+    });
+  });
+  allClubs.sort((a, b) => b.strength - a.strength);
+
+  // 톱 70 클럽이 적극 영입 활동
+  const buyers = allClubs.slice(0, 70);
+
+  for (const buyer of buyers) {
+    // 재정: budget 기반 (이미 클럽 생성 시 설정됨)
+    let remainingBudget = buyer.budget || (buyer.strength * buyer.strength * 2);
+    const numBuys = buyer.strength >= 90 ? rand(2, 4) :
+                    buyer.strength >= 80 ? rand(1, 3) :
+                    buyer.strength >= 70 ? rand(1, 2) : 1;
+
+    for (let n = 0; n < numBuys; n++) {
+      // 포지션 필요도 체크 (같은 그룹 6명 이상이면 그 포지션 안 삼)
+      const positionsNeeded = analyzePositionsNeeded(buyer);
+      if (positionsNeeded.length === 0) break;
+
+      const target = findTargetForBuyer(world, buyer, remainingBudget, positionsNeeded);
+      if (!target) break;
+
+      // 실제 트랜잭션
+      const sellerProfit = target.fee;
+      target.sellerClub.players = target.sellerClub.players.filter(p => p.id !== target.player.id);
+      buyer.players = buyer.players || [];
+      buyer.players.push(target.player);
+      remainingBudget -= target.fee;
+      // 셀러 클럽 budget 증가
+      target.sellerClub.budget = (target.sellerClub.budget || 0) + sellerProfit;
+
+      news.push({
+        year,
+        headline: `${buyer.name}, ${target.player.name} (${target.player.age}세 ${target.player.position}, OVR ${target.player.ovr}) 영입 — ${target.fee.toLocaleString()}만 € (${target.sellerClub.name}에서)`,
+        buyer: buyer.name,
+        seller: target.sellerClub.name,
+        playerName: target.player.name,
+        age: target.player.age,
+        position: target.player.position,
+        fee: target.fee,
+        ovr: target.player.ovr,
+        ts: Date.now() + Math.random()
+      });
+    }
+  }
+  news.sort((a, b) => b.fee - a.fee);
+  return news.slice(0, 60);
+}
+
+function analyzePositionsNeeded(club) {
+  if (!club.players) return ['GK','DF','MF','FW'];
+  const counts = { GK: 0, DF: 0, MF: 0, FW: 0 };
+  club.players.forEach(p => {
+    const g = groupOf(p.position);
+    counts[g] = (counts[g] || 0) + 1;
+  });
+  // 6명 이상 있는 포지션은 제외, 4명 이하인 포지션 우선
+  const needs = [];
+  if (counts.GK < 4) needs.push('GK');
+  if (counts.DF < 9) needs.push('DF', 'DF'); // 가중치
+  if (counts.MF < 9) needs.push('MF', 'MF');
+  if (counts.FW < 6) needs.push('FW', 'FW');
+  return needs;
+}
+
+function findTargetForBuyer(world, buyer, budget, positionsNeeded) {
+  const buyerStr = buyer.strength;
+  // 영입 OVR 범위: 본인 클럽 평균 -2 ~ +3
+  const targetMin = buyerStr - 4;
+  const targetMax = Math.min(maxOvrForClub(buyer), buyerStr + 3);
+
+  // 위치 그룹 (필요한 포지션 중 무작위)
+  const wantedGroup = positionsNeeded[Math.floor(Math.random() * positionsNeeded.length)];
+
+  const candidates = [];
+  for (const league of LEAGUES) {
+    // 자기보다 더 강한 리그에서는 영입 안 함 (현실)
+    if (league.strength > buyerStr + 3) continue;
+    const clubs = world.clubs[league.id];
+    if (!clubs) continue;
+    for (const club of clubs) {
+      if (club.id === buyer.id) continue;
+      if (!club.players) continue;
+      for (const p of club.players) {
+        if (groupOf(p.position) !== wantedGroup) continue;
+        if (p.ovr < targetMin || p.ovr > targetMax) continue;
+        if (p.age > 32 && p.ovr < 78) continue; // 늙은 평범한 선수는 안 삼
+        // 실제 스타 (real=true)는 빅→빅 이동만
+        if (p.real && buyerStr < 85) continue;
+        candidates.push({ player: p, sellerClub: club });
+      }
+    }
+  }
+  if (candidates.length === 0) return null;
+  const picked = candidates[Math.floor(Math.random() * candidates.length)];
+  // 이적료
+  const ageMul = picked.player.age <= 22 ? 1.5 : (picked.player.age <= 27 ? 1.2 : (picked.player.age <= 30 ? 0.9 : 0.6));
+  const fee = Math.round(picked.player.ovr * picked.player.ovr * (1 + Math.random() * 0.5) * ageMul * 0.5);
+  if (fee > budget) return null;
+  return { ...picked, fee };
+}
+
+/* ============================================================
  *  매 시즌 종료 통합 호출
  * ============================================================ */
-export function runOffseasonSim(state) {
+export function runOffseasonSim(state, playerLeagueTable) {
   const world = state.world;
 
   // 1. 로스터 보장
   ensureTopRosters(world);
 
-  // 2. NPC 노화 (이미 생성된 로스터만)
+  // 2. 승강 처리 (본인 클럽 포함, 다른 클럽도 모두)
+  const promRel = processPromotionRelegation(world, state.player.clubId, playerLeagueTable);
+
+  // 3. NPC 이적시장 (재정/포지션/리그강도 기반)
+  const npcTransfers = simulateNpcTransferMarket(world, state.year);
+
+  // 4. NPC 노화/은퇴/성장
   const aging = ageNpcPlayers(world);
 
-  // 3. 직전 시즌 어워드
+  // 5. 직전 시즌 어워드
   if (!world.seasonAwards) world.seasonAwards = {};
   world.seasonAwards[state.year - 1] = generateSeasonAwards(world, state.year - 1);
 
-  // 4. 세계 랭킹
+  // 6. 세계 랭킹
   world.rankings = generateWorldRankings(world);
 
-  // 5. 빅딜 (이적시장)
+  // 7. 빅딜 로그
   if (!world.bigDeals) world.bigDeals = [];
-  const newDeals = simulateBigTransfers(world, state.year);
-  world.bigDeals = [...newDeals, ...(world.bigDeals || [])].slice(0, 200);
+  world.bigDeals = [...npcTransfers, ...(world.bigDeals || [])].slice(0, 200);
 
-  // 6. 라이벌 선수
+  // 8. 라이벌 선수
   world.rivals = getRivalPlayers(world, state.player, 10);
 
-  // 7. 발롱도르 NPC 시뮬 (본인 미수상 시)
+  // 9. 발롱도르 NPC 시뮬 (본인 미수상 시)
   const wonBd = (state.player.trophies || []).some(t => t.season === state.year - 1 && t.name === '발롱도르');
   if (!wonBd) {
     const bdWinner = simulateBallonDor(world, state.year - 1);
@@ -337,5 +533,9 @@ export function runOffseasonSim(state) {
     }
   }
 
-  return { aging, newDealsCount: newDeals.length };
+  return {
+    aging,
+    newDealsCount: npcTransfers.length,
+    promotionRelegation: promRel
+  };
 }
