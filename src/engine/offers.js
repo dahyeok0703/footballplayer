@@ -477,6 +477,79 @@ export function makeLoanRenewalOffer(state, clubId, leagueId, clubName) {
   };
 }
 
+/* ---------- 역오퍼 — 사용자가 제안한 클럽이 수락한 경우 ---------- */
+export function makeProposalOffer(state, club, league) {
+  const player = state.player;
+  const ovr = calcOVR(player);
+  const diff = ovr - club.strength;
+  // 역할 결정
+  let role;
+  if (diff >= 5) role = 'star';
+  else if (diff >= 0) role = 'starter';
+  else if (diff >= -5) role = 'rotation';
+  else if (player.age <= 21) role = 'prospect';
+  else role = 'bench';
+  const roleInfo = ROLES[role];
+
+  const ageMul = player.age <= 21 ? 1.4 : (player.age <= 27 ? 1.1 : (player.age <= 31 ? 0.85 : 0.5));
+  const fee = Math.round(ovr * ovr * (league.strength / 60) * (0.4 + Math.random() * 0.4) * ageMul * 0.5);
+  let wage = Math.round((league.strength + ovr) * 0.4 * (0.85 + Math.random() * 0.25) * roleInfo.wageMul);
+  let signOn = Math.round(wage * (player.age >= 28 ? 4 : 2));
+  let years = roleInfo.shortContract ? rand(1, 2) : (role === 'prospect' ? rand(3, 5) : rand(2, 4));
+  // 본인 제안이라 약간 짠 조건 (-10% 주급, -50% 사이닝)
+  wage = Math.round(wage * 0.92);
+  signOn = Math.round(signOn * 0.55);
+
+  // 등번호 제안
+  const excluded = [1, 7, 9, 10, 11];
+  let proposedJersey;
+  do { proposedJersey = 2 + Math.floor(Math.random() * 50); } while (excluded.includes(proposedJersey));
+
+  // 합류 시점
+  const window = state.calendar && state.calendar.month === 1 ? 'winter' : 'summer';
+  const joinDate = computeJoinDate(state.calendar, window);
+
+  return {
+    clubId: club.id,
+    clubName: club.name,
+    leagueId: league.id,
+    leagueName: league.name,
+    leagueStrength: league.strength,
+    clubStrength: club.strength,
+    fee, wage, signOn,
+    bonusGoals: Math.round(wage * 0.04),
+    bonusAppearances: Math.round(wage * 0.02),
+    bonusTrophy: Math.round(wage * 4),
+    buyoutClause: null,
+    jerseyNumber: proposedJersey,
+    years,
+    role,
+    roleLabel: roleInfo.name,
+    roleDescription: roleInfo.description,
+    playingTimeGuarantee: roleInfo.minPlayingTime || 1500,
+    threeYearPlan: role === 'star' ? '즉시 핵심으로 활용' : (role === 'prospect' ? '유망주 등록 → 3년 후 주전' : '점진적 기여'),
+    captainPath: null,
+    uclChance: clamp(Math.round((league.strength - 70) * 1.2 + (club.strength - 80) * 1.0), 0, 90),
+    expectedFinish: clamp(Math.round((club.strength - league.strength) / -2) + rand(1, 4), 1, league.size),
+    isLoan: false,
+    freeTransfer: false,
+    isRival: false,
+    interestLevel: 55, // 본인 제안이라 관심도 보통
+    pros: ['📤 본인 의사로 제안한 이적', `🎯 ${club.name} 입성 가능`],
+    risks: role === 'bench' || role === 'rotation' ? ['⚠ 본인 OVR이 클럽 수준 못 미침 — 출전 시간 부담'] : [],
+    currentClubFanReaction: '🤷 본인 의사로 이적하겠다는 거니 큰 반발은 없음.',
+    newClubFanReaction: `${club.name} 팬: 환영하지만 \"왜 우리한테?\"라는 반응도.`,
+    pressCoverage: `📰 ${player.name} 측이 ${club.name} 이적을 직접 타진. 관심도 보통.`,
+    joinDate,
+    arrivedDate: state.calendar ? { ...state.calendar } : null,
+    kind: 'proposal',
+    reason: '본인이 직접 제안한 이적',
+    negotiationRound: 0,
+    withdrawn: false,
+    fromProposal: true
+  };
+}
+
 function pickReason(kind, role, player) {
   if (kind === 'prospect') {
     return pick([

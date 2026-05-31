@@ -4,7 +4,7 @@
 
 import { LEAGUES, NAME_POOLS, getLeague, TROPHIES, CONFEDERATIONS } from '../data/world.js';
 import { game, DATE_FORMAT } from './state.js';
-import { POSITION_STATS, STAT_NAMES, calcOVR, groupOf } from '../engine/sim.js';
+import { POSITION_STATS, STAT_NAMES, calcOVR, groupOf, calcMarketValue } from '../engine/sim.js';
 import { POSITIONS, NATIONALITY_LIST, DATING_POOL, INDIVIDUAL_AWARDS, statUpgradeCost, statUpgradeGain, getPosition } from '../data/extras.js';
 import { calcFame, userPostsTweet, getAvailablePartners, approachPartner, sendDatingMessage, setExclusive, breakUp, tryUpgradeStat } from '../engine/social.js';
 import { setApiKey, getApiKey, hasApiKey, clearApiKey, setModel, getModel } from '../engine/ai.js';
@@ -500,11 +500,12 @@ function renderPlayer() {
         <p>클럽: <strong>${p.clubName}</strong>${p.isOnLoan && p.loanFrom ? ` <span class="text-warn">📋 ${escapeHtml(p.loanFrom.clubName)}에서 임대</span>` : ''}</p>
         <p>리그: ${getLeague(p.leagueId).name}</p>
         <p>나이: ${p.age}세 · 재능 ${'★'.repeat(p.talent)}${'☆'.repeat(5 - p.talent)}</p>
-        <p>주급: <strong>${p.salary}만 €</strong></p>
-        <p>계약: ${p.contractYears}년 남음</p>
-        <p>사기: ${p.morale}/100</p>
+        <p>주급: <strong>${(p.salary || 0).toLocaleString()}만 €</strong></p>
+        <p>계약: ${p.contractYears || 0}년 남음</p>
+        <p>사기: ${p.morale || 70}/100</p>
         ${p.injury > 0 ? `<p class="text-bad">부상: ${p.injury}주</p>` : ''}
-        <p>총 자산: <strong>${p.money.toLocaleString()}만 €</strong></p>
+        <p>총 자산: <strong>${(p.money || 0).toLocaleString()}만 €</strong></p>
+        <p>💎 시장 가치: <strong style="color:var(--accent-2); font-size:1.05rem;">${calcMarketValue(p).toLocaleString()}만 €</strong> <small class="text-muted">(Transfermarkt 기준)</small></p>
         <hr style="border-color:var(--border); margin:10px 0;">
         <h4>커리어 통산</h4>
         <p>출전: ${p.careerStats.matches}경기</p>
@@ -1858,9 +1859,14 @@ VIEWS.transfers = function renderTransfersV2() {
         <h3>이적 시장</h3>
         <p class="hint">현재 들어온 이적 제안이 없습니다.</p>
         <p>이적시장 윈도우(여름 6/15-8/31, 겨울 1월)에 활약에 따라 다양한 오퍼가 도착합니다.</p>
+        <div class="actions" style="margin-top:14px;">
+          <button class="primary" id="btn-propose-club">📤 클럽에 역제안</button>
+        </div>
       </div>
     `;
     main().innerHTML = html;
+    const proposeBtn = document.getElementById('btn-propose-club');
+    if (proposeBtn) proposeBtn.onclick = () => showProposeModal();
     return;
   }
 
@@ -1966,9 +1972,14 @@ VIEWS.transfers = function renderTransfersV2() {
   if (offers.length > 0 && !pending) {
     html += `<button id="btn-reject-all-v2" style="margin-top:14px;" class="danger">전체 거절 (잔류)</button>`;
   }
+  if (!pending) {
+    html += `<button id="btn-propose-club-v2" class="primary" style="margin-top:14px; margin-left:8px;">📤 클럽에 역제안</button>`;
+  }
 
   html += `</div>`;
   main().innerHTML = html;
+  const propose2 = document.getElementById('btn-propose-club-v2');
+  if (propose2) propose2.onclick = () => showProposeModal();
 
   // 핸들러
   document.querySelectorAll('[data-accept-v2]').forEach(b => {
@@ -2632,4 +2643,115 @@ function renderRetiredPlayers(world) {
       </tbody>
     </table>
   `;
+}
+
+/* ============================================================
+ *  역오퍼 모달 — 사용자가 클럽을 골라 제안
+ * ============================================================ */
+function showProposeModal() {
+  const s = game.state;
+  const proposed = s.player.proposalsThisSeason || {};
+  // 리그별 클럽 후보 — 강도 정렬
+  const overlay = document.createElement('div');
+  overlay.id = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content" style="max-width:640px; max-height:85vh; overflow-y:auto;">
+      <h3>📤 클럽에 역제안</h3>
+      <p class="hint">본인이 직접 클럽에 \"저를 영입해주세요\"라고 제안. 클럽 강도와 본인 OVR 격차로 수락 확률 결정.<br>
+      ⚠ 같은 클럽엔 시즌당 1회만 가능. 시즌 종료 시 리셋.</p>
+
+      <label style="display:flex; flex-direction:column; gap:6px; margin-top:14px;">
+        <strong>리그 선택</strong>
+        <select id="propose-league">
+          ${renderLeagueOptions()}
+        </select>
+      </label>
+      <label style="display:flex; flex-direction:column; gap:6px; margin-top:10px;">
+        <strong>클럽 선택</strong>
+        <select id="propose-club" size="10" style="height:auto; min-height:200px;"></select>
+      </label>
+      <div id="propose-info" style="margin-top:10px; padding:10px; background:var(--bg-2); border-radius:6px; font-size:0.86rem;"></div>
+      <div class="actions" style="margin-top:14px;">
+        <button class="primary" id="btn-do-propose">📤 제안 보내기</button>
+        <button id="btn-propose-cancel">취소</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const refreshClubs = () => {
+    const leagueId = document.getElementById('propose-league').value;
+    const clubs = s.world.clubs[leagueId] || [];
+    const sorted = clubs.slice().sort((a, b) => b.strength - a.strength);
+    const sel = document.getElementById('propose-club');
+    sel.innerHTML = sorted.map(c => {
+      const isProposed = proposed[c.id] ? '✋ 이미 제안함' : '';
+      const isMyClub = c.id === s.player.clubId ? '🏠 현 소속' : '';
+      return `<option value="${c.id}" ${(isProposed || isMyClub) ? 'disabled' : ''}>${escapeHtml(c.name)} — 강도 ${c.strength} ${isProposed} ${isMyClub}</option>`;
+    }).join('');
+    updateProbInfo();
+  };
+  const updateProbInfo = () => {
+    const leagueId = document.getElementById('propose-league').value;
+    const clubId = document.getElementById('propose-club').value;
+    const clubs = s.world.clubs[leagueId] || [];
+    const club = clubs.find(c => c.id === clubId);
+    if (!club) {
+      document.getElementById('propose-info').innerHTML = '<p class="hint">클럽 선택...</p>';
+      return;
+    }
+    const ovr = calcOVR(s.player);
+    const diff = ovr - club.strength;
+    let prob = 0.10;
+    if (diff >= 5) prob = 0.75;
+    else if (diff >= 1) prob = 0.55;
+    else if (diff >= -3) prob = 0.40;
+    else if (diff >= -7) prob = 0.22;
+    else if (diff >= -12) prob = 0.10;
+    else prob = 0.03;
+    if (s.player.age <= 21) prob += 0.18;
+    else if (s.player.age <= 25) prob += 0.08;
+    else if (s.player.age >= 33) prob -= 0.20;
+    else if (s.player.age >= 30) prob -= 0.10;
+    if (club.countryCode === s.player.nationality) prob += 0.07;
+    const potGap = (s.player.potential || ovr) - ovr;
+    if (potGap >= 10) prob += 0.10;
+    else if (potGap >= 5) prob += 0.05;
+    prob = Math.max(0.03, Math.min(0.92, prob));
+    const probPct = Math.round(prob * 100);
+    const probCls = prob >= 0.5 ? 'text-good' : (prob >= 0.25 ? 'text-warn' : 'text-bad');
+    document.getElementById('propose-info').innerHTML = `
+      <p><strong>${escapeHtml(club.name)}</strong> · 강도 ${club.strength} (본인 OVR ${ovr})</p>
+      <p>수락 확률: <strong class="${probCls}">${probPct}%</strong></p>
+      <p class="hint">${diff >= 0 ? '본인이 명백히 더 좋음' : (diff >= -5 ? '비슷한 수준' : '본인이 다소 낮음 — 어렵지만 시도 가능')}</p>
+    `;
+  };
+  document.getElementById('propose-league').onchange = refreshClubs;
+  document.getElementById('propose-club').onchange = updateProbInfo;
+  refreshClubs();
+
+  document.getElementById('btn-do-propose').onclick = () => {
+    const leagueId = document.getElementById('propose-league').value;
+    const clubId = document.getElementById('propose-club').value;
+    if (!clubId) return alert('클럽을 선택하세요');
+    const result = game.proposeOfferToClub(clubId, leagueId);
+    document.body.removeChild(overlay);
+    if (result.error) {
+      alert({
+        pending_transfer: '이미 사전 계약 진행 중',
+        already_proposed: '이미 이번 시즌 제안한 클럽',
+        same_club: '현 소속 클럽',
+        club_not_found: '클럽 정보 오류'
+      }[result.error] || '오류');
+    } else if (result.success) {
+      game.log_(`✅ ${result.offer.clubName} 측이 본인 제안을 수락! 이적 메뉴에서 협상.`, 'good');
+      alert(`🎉 ${result.offer.clubName}이 본인 제안을 수락했습니다!\n이적 메뉴에서 조건 확인/협상 가능.`);
+      renderView('transfers');
+    } else if (result.rejected) {
+      game.log_(`❌ 역제안 거절됨 — 수락 확률 ${result.probability}%`, 'bad');
+      alert(`❌ 클럽이 본인 제안을 거절했습니다.\n수락 확률 ${result.probability}%였음.`);
+      renderView('transfers');
+    }
+  };
+  document.getElementById('btn-propose-cancel').onclick = () => document.body.removeChild(overlay);
 }

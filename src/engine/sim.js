@@ -45,6 +45,75 @@ export function calcOVR(player) {
   return Math.round(ovr);
 }
 
+/* ---------- 현실적 몸값 산정 (만 € 단위) ----------
+ *  Transfermarkt 기준:
+ *  - Mbappé/Vinicius (OVR 91, 25세): €180M+ → 18000만
+ *  - Bellingham (OVR 90, 22세): €180M
+ *  - Yamal (OVR 89, 18세, 잠재력 96): €150M+
+ *  - OVR 85 25세 (Saka급): €70M
+ *  - OVR 80 27세: €20M
+ *  - OVR 75 28세: €7M
+ *  - OVR 70 30세: €3M
+ */
+const VALUE_BRACKETS = [
+  { min: 93, peak: 25000 },  // Top 3 worldwide (Mbappé+)
+  { min: 91, peak: 17000 },  // Top 10 (Vinicius/Bellingham)
+  { min: 89, peak: 10000 },  // Top 25 (Salah/Foden)
+  { min: 87, peak: 6000 },   // 챔스 단골
+  { min: 85, peak: 3800 },   // 톱 50 (Saka/Gyökeres)
+  { min: 83, peak: 2400 },
+  { min: 81, peak: 1500 },   // 빅리그 주전
+  { min: 79, peak: 900 },
+  { min: 77, peak: 550 },
+  { min: 75, peak: 320 },
+  { min: 73, peak: 180 },
+  { min: 71, peak: 100 },
+  { min: 69, peak: 55 },
+  { min: 66, peak: 25 },
+  { min: 62, peak: 10 },
+  { min: 0,  peak: 3 }
+];
+
+function getPeakValue(ovr) {
+  for (const b of VALUE_BRACKETS) {
+    if (ovr >= b.min) return b.peak;
+  }
+  return 3;
+}
+
+export function calcMarketValue(player) {
+  const ovr = calcOVR(player);
+  const pot = player.potential || ovr;
+  const age = player.age || 25;
+  const peak = getPeakValue(ovr);
+  // 나이별 보정 + 잠재력 보너스 (어린 선수 한정)
+  let ageMul;
+  if (age <= 17) {
+    ageMul = 0.45 + Math.max(0, pot - ovr) * 0.08; // 잠재력 갭 보너스
+  } else if (age <= 19) {
+    ageMul = 0.75 + Math.max(0, pot - ovr) * 0.07;
+  } else if (age <= 21) {
+    ageMul = 0.95 + Math.max(0, pot - ovr) * 0.05;
+  } else if (age <= 26) {
+    ageMul = 1.0;
+  } else if (age <= 28) {
+    ageMul = 0.85;
+  } else if (age <= 30) {
+    ageMul = 0.55;
+  } else if (age <= 32) {
+    ageMul = 0.32;
+  } else if (age <= 34) {
+    ageMul = 0.16;
+  } else if (age <= 36) {
+    ageMul = 0.08;
+  } else {
+    ageMul = 0.03;
+  }
+  let val = peak * ageMul;
+  if (player.injury && player.injury > 6) val *= 0.85;
+  return Math.max(10, Math.round(val));
+}
+
 /* ---------- 매치 시뮬 (선수 시점) ---------- */
 export function simulateMatch(player, fixture) {
   const myOVR = calcOVR(player);

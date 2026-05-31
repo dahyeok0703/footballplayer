@@ -8,7 +8,7 @@ import { POSITION_STATS, calcOVR, groupOf, applyTraining } from '../engine/sim.j
 import { initSocialState, payWeeklyWage, generateWeeklyMediaActivity, processPendingPostComments, evaluateSeasonAwards } from '../engine/social.js';
 import { nextDay, addDays, compareDate, sameDate, dateLabel, daysBetween, isSeasonEnd } from '../engine/calendar.js';
 import { scheduleSeasonDecisions, getDecisionTemplate, applyDecisionEffect } from '../engine/decisions.js';
-import { generateDiverseOffers, makeLoanRenewalOffer } from '../engine/offers.js';
+import { generateDiverseOffers, makeLoanRenewalOffer, makeProposalOffer } from '../engine/offers.js';
 import { NATIONAL_TOURNAMENTS, NATION_TO_CONF } from '../data/tournaments.js';
 import { getContinentalForRank, getContinentalCup, A_MATCH_DATES, MAJOR_TOURNAMENTS, getInternationalMatchType, getPrimaryCup } from '../data/cups.js';
 import { NATIONAL_TEAMS, getNationalTeam, pickOpponentForMatch } from '../data/national_teams.js';
@@ -442,6 +442,7 @@ export const game = {
       ...scheduleTransferOffers(s.calendar)
     ];
     player.tournamentsThisSeason = [];
+    player.proposalsThisSeason = {}; // 역오퍼 시즌 리셋
 
     return {
       seasonEnd: true,
@@ -480,6 +481,65 @@ export const game = {
       s.offers = []; // 다른 오퍼 모두 거절 (이미 계약 합의)
       return { ...offer, joinedImmediately: false };
     }
+  },
+
+  /* ---------- 역오퍼 — 사용자가 클럽에 제안 ----------
+   *  - 클럽 강도 vs 본인 OVR 차이로 수락 확률 결정
+   *  - 같은 클럽엔 시즌당 1회만 가능 (스팸 방지)
+   *  - 수락 시 일반 오퍼와 동일하게 협상 가능
+   */
+  proposeOfferToClub(clubId, leagueId) {
+    const s = this.state;
+    if (s.pendingTransfer) return { error: 'pending_transfer' };
+    s.player.proposalsThisSeason = s.player.proposalsThisSeason || {};
+    if (s.player.proposalsThisSeason[clubId]) return { error: 'already_proposed' };
+
+    const club = (s.world.clubs[leagueId] || []).find(c => c.id === clubId);
+    if (!club) return { error: 'club_not_found' };
+    if (club.id === s.player.clubId) return { error: 'same_club' };
+
+    const ovr = calcOVR(s.player);
+    const myAge = s.player.age;
+
+    // 수락 확률 계산
+    let prob = 0.10;
+    const diff = ovr - club.strength;
+    if (diff >= 5) prob = 0.75;       // 본인이 명백히 더 좋음
+    else if (diff >= 1) prob = 0.55;
+    else if (diff >= -3) prob = 0.40;
+    else if (diff >= -7) prob = 0.22;
+    else if (diff >= -12) prob = 0.10;
+    else prob = 0.03;
+
+    // 나이 보정
+    if (myAge <= 21) prob += 0.18; // 어린 선수는 유망주로 환영
+    else if (myAge <= 25) prob += 0.08;
+    else if (myAge >= 33) prob -= 0.20;
+    else if (myAge >= 30) prob -= 0.10;
+
+    // 같은 국적 보너스
+    if (club.countryCode === s.player.nationality) prob += 0.07;
+
+    // 잠재력 보너스 (장기 투자)
+    const potGap = (s.player.potential || ovr) - ovr;
+    if (potGap >= 10) prob += 0.10;
+    else if (potGap >= 5) prob += 0.05;
+
+    prob = clamp(prob, 0.03, 0.92);
+
+    s.player.proposalsThisSeason[clubId] = true;
+
+    if (Math.random() < prob) {
+      // 수락 — 일반 오퍼 생성
+      const league = getLeague(leagueId);
+      const offer = makeProposalOffer(s, club, league);
+      offer.id = `prop_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+      offer.fromProposal = true;
+      s.offers = s.offers || [];
+      s.offers.push(offer);
+      return { success: true, offer };
+    }
+    return { rejected: true, probability: Math.round(prob * 100) };
   },
 
   /* ---------- 협상 (15가지 옵션) ---------- */
@@ -902,24 +962,20 @@ function collectTodayEvents(s) {
 }
 
 /* ---------- 백그라운드 세계 리그 시뮬 ----------
- *  매주 주차 전환 시 톱 30개 리그에서 1라운드 자동 시뮬
- *  각 리그의 leagueTable이 시즌 내내 점진적으로 누적
+ *  매주 주차 전환 시 모든 1부 리그 자동 시뮬 (강도 무관)
+ *  매치 적게 한 클럽 우선 짝짓기 (홀수 리그도 누락 없이)
  */
 function simulateBackgroundWorldLeagues(state) {
   const world = state.world;
   if (!world.bgLeagueTables) world.bgLeagueTables = {};
 
-  // 본인 리그 외 톱 30 리그 (강도 순)
-  const topLeagues = LEAGUES
-    .filter(l => l.id !== state.player.leagueId && l.strength >= 65)
-    .sort((a, b) => b.strength - a.strength)
-    .slice(0, 30);
+  // 본인 리그 제외 모든 1부 리그
+  const allLeagues = LEAGUES.filter(l => l.id !== state.player.leagueId && l.tier === 1);
 
-  for (const league of topLeagues) {
+  for (const league of allLeagues) {
     const clubs = world.clubs[league.id];
     if (!clubs || clubs.length < 2) continue;
 
-    // 시즌 시작 시 테이블 초기화
     if (!world.bgLeagueTables[league.id] || world.bgLeagueTables[league.id]._year !== state.year) {
       world.bgLeagueTables[league.id] = { _year: state.year };
       clubs.forEach(c => {
@@ -928,10 +984,15 @@ function simulateBackgroundWorldLeagues(state) {
     }
     const tbl = world.bgLeagueTables[league.id];
 
-    // 모든 클럽 무작위로 짝지어 1라운드 시뮬
-    const shuffled = [...clubs].sort(() => Math.random() - 0.5);
-    for (let i = 0; i + 1 < shuffled.length; i += 2) {
-      const a = shuffled[i], b = shuffled[i + 1];
+    // 매치 적게 한 클럽 우선 — 홀수 리그도 균등 분배
+    const sorted = clubs.slice().sort((a, b) => {
+      const ap = tbl[a.id]?.played || 0;
+      const bp = tbl[b.id]?.played || 0;
+      if (ap !== bp) return ap - bp;
+      return Math.random() - 0.5;
+    });
+    for (let i = 0; i + 1 < sorted.length; i += 2) {
+      const a = sorted[i], b = sorted[i + 1];
       const ga = simGoalsSimple(a.strength, b.strength);
       const gb = simGoalsSimple(b.strength, a.strength);
       const tA = tbl[a.id], tB = tbl[b.id];
@@ -945,20 +1006,26 @@ function simulateBackgroundWorldLeagues(state) {
 
 /* ---------- 본인 리그의 다른 클럽들 한 라운드 시뮬 ----------
  *  본인이 리그 경기 있는 주에만 발동 → 다른 클럽들도 같은 매치 수 누적
+ *  매치 횟수가 적은 클럽 우선 짝짓기 (홀수 사이즈 리그 누락 방지)
  */
 function simulateOtherClubsLeagueRound(state) {
   const clubs = state.world.clubs[state.player.leagueId];
   if (!clubs) return;
   const week = state.season.fixtures.find(f => f.week === state.week);
   const myLeagueMatch = week && week.matches ? week.matches.find(m => m.type === 'league') : null;
-  // 본인 리그 경기 없는 주에는 다른 클럽도 매치 없음 (실제 일정과 정렬)
   if (!myLeagueMatch) return;
   const myOppId = myLeagueMatch.opp;
   const others = clubs.filter(c => c.id !== state.player.clubId && c.id !== myOppId);
-  // 절반 쌍으로 경기 (라운드 로빈 진행)
-  const shuffled = [...others].sort(() => Math.random() - 0.5);
-  for (let i = 0; i + 1 < shuffled.length; i += 2) {
-    const a = shuffled[i], b = shuffled[i + 1];
+  // 매치 적게 한 클럽 우선 — 홀수 리그에서 누락 방지
+  const tbl = state.season.leagueTable;
+  const sorted = others.slice().sort((a, b) => {
+    const aPlayed = (tbl[a.id]?.played || 0);
+    const bPlayed = (tbl[b.id]?.played || 0);
+    if (aPlayed !== bPlayed) return aPlayed - bPlayed;
+    return Math.random() - 0.5;
+  });
+  for (let i = 0; i + 1 < sorted.length; i += 2) {
+    const a = sorted[i], b = sorted[i + 1];
     const ga = simGoalsSimple(a.strength, b.strength);
     const gb = simGoalsSimple(b.strength, a.strength);
     const tA = state.season.leagueTable[a.id];
