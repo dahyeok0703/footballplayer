@@ -118,31 +118,52 @@ export function evaluateChoice(player, highlight, choiceIdx, tactic, role, match
   const result = success ? choice.success : choice.failure;
 
   // 골/어시 확률 보정 — 현실성 (Haaland 0.77골/경기, 평균 선수 0.2~0.5)
-  // OVR 90 vs 60 (약팀): ~1.2x → 다득점 가능
-  // OVR 90 vs 90 (동급): ~0.30x → 한 경기 0-1골 평균
-  // OVR 75 vs 90 (강팀): ~0.10x → 거의 못 넣음 (현실)
-  // OVR 75 vs 70 (비등): ~0.44x → 가끔 골
   const myOvr = calcOVR(player);
   const skillRatio = clamp(0.30 + (myOvr - oppStr) / 35, 0.08, 1.3);
-  // 빅매치(컵 결승 등)는 추가 보너스
   const isBigGame = (matchState?.fixture?.type === 'continental' || matchState?.fixture?.type === 'national' ||
     (matchState?.fixture?.type === 'cup' && ['결승', '준결승'].includes(matchState?.fixture?.round)));
   const bigGameBonus = isBigGame ? 1.15 : 1.0;
-  // 사기/폼 영향 (사기 80+면 +20%, 50-면 -20%)
   const formBonus = (player.morale || 70) >= 80 ? 1.2 : ((player.morale || 70) <= 50 ? 0.8 : 1.0);
-  const scaledGoal = (result.goal || 0) * skillRatio * bigGameBonus * formBonus;
-  const scaledAssist = (result.assist || 0) * skillRatio * bigGameBonus * formBonus * 1.1; // 어시는 약간 더 후함
+
+  // 골/어시 판정 — narrative와 실제 결과 일치 보장
+  let actualGoal = 0;
+  let actualAssist = 0;
+  let narrative = result.narrative;
+  let ratingDelta = result.rating || 0;
+
+  if (success && (result.goal || 0) > 0) {
+    const goalProb = clamp((result.goal || 0) * skillRatio * bigGameBonus * formBonus, 0, 1);
+    if (Math.random() < goalProb) {
+      actualGoal = 1; // 골 확정 (narrative 유지)
+    } else {
+      // 골 못 넣음 — narrative 변경
+      narrative = '슈팅이 골대를 벗어나거나 GK에게 막혔다.';
+      ratingDelta = Math.max(0, ratingDelta - 4);
+    }
+  }
+  if (success && (result.assist || 0) > 0) {
+    const assistProb = clamp((result.assist || 0) * skillRatio * bigGameBonus * formBonus * 1.1, 0, 1);
+    if (Math.random() < assistProb) {
+      actualAssist = 1; // 어시 확정
+    } else {
+      // 어시 기회였지만 동료가 마무리 실패
+      if (actualGoal === 0) {
+        narrative = '좋은 패스였지만 동료가 마무리 못 함.';
+        ratingDelta = Math.max(0, Math.round(ratingDelta * 0.6));
+      }
+    }
+  }
 
   const outcome = {
     success,
-    narrative: `${highlight.minute}' ${result.narrative}`,
+    narrative: `${highlight.minute}' ${narrative}`,
     minute: highlight.minute,
     choiceLabel: choice.label,
-    rating: result.rating || 0,
+    rating: ratingDelta,
     fan: result.fan || 0,
-    goal: scaledGoal,
-    assist: scaledAssist,
-    keyMoment: !!result.keyMoment,
+    goal: actualGoal,      // 0 or 1 — 이미 결정됨 (확률 X)
+    assist: actualAssist,  // 0 or 1
+    keyMoment: !!result.keyMoment && (actualGoal > 0 || actualAssist > 0 || result.keyMoment),
     oppCounter: result.oppCounter || 0,
     injuryRisk: result.injuryRisk || 0
   };
@@ -177,19 +198,16 @@ export function applyHighlightOutcome(matchState, outcome) {
   if (!outcome) return;
   matchState.ratingPoints += outcome.rating;
   matchState.fanReaction = clamp(matchState.fanReaction + outcome.fan, 0, 100);
-  if (outcome.goal) {
-    if (Math.random() < outcome.goal) {
-      matchState.playerGoals++;
-      matchState.runningTeamScore++; // 즉시 점수판 반영
-      outcome.scoredNow = true;
-    }
+  // 골/어시는 evaluateChoice에서 이미 0/1로 결정됨 — 확률 X
+  if (outcome.goal > 0) {
+    matchState.playerGoals++;
+    matchState.runningTeamScore++; // 즉시 점수판 반영
+    outcome.scoredNow = true;
   }
-  if (outcome.assist) {
-    if (Math.random() < outcome.assist) {
-      matchState.playerAssists++;
-      matchState.runningTeamScore++; // 어시 → 동료 골
-      outcome.assistNow = true;
-    }
+  if (outcome.assist > 0) {
+    matchState.playerAssists++;
+    matchState.runningTeamScore++; // 어시 → 동료 골
+    outcome.assistNow = true;
   }
   if (outcome.keyMoment) {
     matchState.keyMoments.push({
