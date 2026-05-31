@@ -88,31 +88,51 @@ export function selectHighlights(player, fixture, role) {
   return selected.map((h, i) => ({ ...h, minute: minutes[i] }));
 }
 
-/* ---------- 선택 평가 (성공/실패 판정) ---------- */
+/* ---------- 선택 평가 (성공/실패 판정) ----------
+ *  - 상대 강도가 높을수록 성공 난이도 ↑
+ *  - 골/어시 확률은 OVR vs 상대 강도 차이로 스케일
+ *  - 약팀 상대로는 골 많이, 강팀 상대로는 적게 (현실)
+ */
 export function evaluateChoice(player, highlight, choiceIdx, tactic, role, matchState) {
   const choice = highlight.choices[choiceIdx];
   if (!choice) return null;
 
   const stat = (player.stats && player.stats[choice.stat]) || 50;
-  // 역할 보너스
   const roleObj = ROLES.find(r => r.id === role);
   const roleBonus = (roleObj && roleObj.statBoost === choice.stat) ? 5 : 0;
-  // 전술 보너스
   const tacticObj = TACTICS.find(t => t.id === tactic);
   const isAttack = ['shooting','dribbling','passing','speed'].includes(choice.stat);
   const tacticBonus = tacticObj ? (isAttack ? tacticObj.attackMod : tacticObj.defendMod) : 0;
-  // 사기/컨디션
   const moraleBonus = ((player.morale || 70) - 70) * 0.15;
-  // 피로 페널티 (피로 50+면 능력치 -5, 70+면 -10)
   const fatiguePen = (player.fatigue || 0) >= 70 ? -10 : ((player.fatigue || 0) >= 50 ? -5 : 0);
-  // 특성 보너스
   const traitBonus = getTraitBonus(player, highlight.situation, matchState?.fixture?.type);
 
   const effective = stat + roleBonus + tacticBonus + moraleBonus + fatiguePen + traitBonus + rand(-8, 8);
-  const diff = choice.diff || 65;
-  const success = effective >= diff;
+
+  // 상대 강도가 높을수록 난이도 ↑ (상대 OVR 70이 기본)
+  const oppStr = matchState?.fixture?.oppStr || 70;
+  const oppDifficulty = (oppStr - 70) * 0.4; // 강팀 +12, 약팀 -8
+  const adjustedDiff = (choice.diff || 65) + oppDifficulty;
+  const success = effective >= adjustedDiff;
 
   const result = success ? choice.success : choice.failure;
+
+  // 골/어시 확률 보정 — 현실성 (Haaland 0.77골/경기, 평균 선수 0.2~0.5)
+  // OVR 90 vs 60 (약팀): ~1.2x → 다득점 가능
+  // OVR 90 vs 90 (동급): ~0.30x → 한 경기 0-1골 평균
+  // OVR 75 vs 90 (강팀): ~0.10x → 거의 못 넣음 (현실)
+  // OVR 75 vs 70 (비등): ~0.44x → 가끔 골
+  const myOvr = calcOVR(player);
+  const skillRatio = clamp(0.30 + (myOvr - oppStr) / 35, 0.08, 1.3);
+  // 빅매치(컵 결승 등)는 추가 보너스
+  const isBigGame = (matchState?.fixture?.type === 'continental' || matchState?.fixture?.type === 'national' ||
+    (matchState?.fixture?.type === 'cup' && ['결승', '준결승'].includes(matchState?.fixture?.round)));
+  const bigGameBonus = isBigGame ? 1.15 : 1.0;
+  // 사기/폼 영향 (사기 80+면 +20%, 50-면 -20%)
+  const formBonus = (player.morale || 70) >= 80 ? 1.2 : ((player.morale || 70) <= 50 ? 0.8 : 1.0);
+  const scaledGoal = (result.goal || 0) * skillRatio * bigGameBonus * formBonus;
+  const scaledAssist = (result.assist || 0) * skillRatio * bigGameBonus * formBonus * 1.1; // 어시는 약간 더 후함
+
   const outcome = {
     success,
     narrative: `${highlight.minute}' ${result.narrative}`,
@@ -120,8 +140,8 @@ export function evaluateChoice(player, highlight, choiceIdx, tactic, role, match
     choiceLabel: choice.label,
     rating: result.rating || 0,
     fan: result.fan || 0,
-    goal: result.goal || 0,
-    assist: result.assist || 0,
+    goal: scaledGoal,
+    assist: scaledAssist,
     keyMoment: !!result.keyMoment,
     oppCounter: result.oppCounter || 0,
     injuryRisk: result.injuryRisk || 0
