@@ -224,30 +224,78 @@ function simExtraGoals(att, def) {
   return g;
 }
 
+/* ---------- 매치 중요도 (0.0 ~ 1.0) ----------
+ *  높을수록 감독이 최고 라인업 가동
+ *  낮으면 피로 누적된 핵심 선수는 자동 로테이션
+ */
+export function matchImportance(fixture) {
+  if (!fixture) return 0.5;
+  if (fixture.type === 'national') {
+    if ((fixture.round || '').includes('월드컵')) return 1.0;
+    if ((fixture.round || '').includes('본선')) return 0.95;
+    return 0.85; // 친선/예선
+  }
+  if (fixture.type === 'continental') {
+    const r = fixture.round || '';
+    if (r === '결승') return 1.0;
+    if (r === '준결승') return 0.95;
+    if (r === '8강') return 0.9;
+    if (r === '16강') return 0.85;
+    return 0.75; // 조별리그
+  }
+  if (fixture.type === 'cup') {
+    const r = fixture.round || '';
+    if (r === '결승') return 1.0;
+    if (r === '준결승') return 0.85;
+    if (r === '8강') return 0.7;
+    if (r === '16강') return 0.5;
+    return 0.35; // 초기 라운드 (32강 등)
+  }
+  // 리그: 상대 강도로 판단
+  if (fixture.oppStr >= 88) return 0.85; // 빅매치
+  if (fixture.oppStr >= 80) return 0.7;
+  if (fixture.oppStr >= 70) return 0.55;
+  if (fixture.oppStr >= 60) return 0.45;
+  return 0.35; // 약체 상대 — 로테이션 적합
+}
+
 /* ---------- 출전 여부 결정 ----------
- *  - OVR 80+: 어느 팀에서든 무조건 주전
- *  - OVR 70+: 거의 항상 주전, 빅클럽 격차 15+ 시 벤치
+ *  - 부상: 결장
+ *  - 피로 + 매치 중요도 조합: 낮은 중요도 + 높은 피로 → 자동 벤치 (감독 로테이션)
+ *  - OVR 80+: 중요도 높으면 무조건 주전, 낮으면 피로 따라
+ *  - OVR 70+: 거의 주전, 빅클럽 격차 15+ 시 벤치
  *  - OVR 60+: 빅클럽 격차 20+ 시 명단 제외, 10+ 시 벤치
- *  - 부상: 결장. 피로 90+: 가끔 벤치 (감독 휴식)
  */
 export function determineStartingStatus(player, fixture) {
   const ovr = calcOVR(player);
   const clubStr = player.clubStrength || 70;
   const fatigue = player.fatigue || 0;
+  const importance = matchImportance(fixture);
 
   if (player.injury && player.injury > 0) return 'absent_injury';
 
-  // 극도 피로 시 휴식 가능성 (90+ → 40% 확률 벤치, 80+ → 15%)
-  if (fatigue >= 90 && Math.random() < 0.4) return 'bench';
-  if (fatigue >= 80 && Math.random() < 0.15) return 'bench';
+  // 감독 자동 로테이션 — 피로 + 낮은 중요도
+  // 피로가 (50 + importance*50) 임계점 초과 시 점진적으로 벤치
+  // 예: 중요도 1.0(결승) → 임계점 100 (거의 안 쉼)
+  //     중요도 0.35(약체 리그) → 임계점 67 → 피로 67+ 면 쉬는 경향
+  const restThreshold = 50 + importance * 50;
+  if (fatigue >= restThreshold) {
+    const restProb = Math.min(0.85, (fatigue - restThreshold) / 30 + (1 - importance) * 0.4);
+    if (Math.random() < restProb) return 'bench';
+  }
 
-  // OVR 80+: 무조건 주전 (월클은 어느 팀에서든 빠질 수 없음)
-  if (ovr >= 80) return 'starter';
-  // OVR 70~79: 거의 주전 (격차 15+ 시 벤치)
+  // OVR 80+: 중요도 0.5 이상이면 무조건 주전 (월클은 빅매치 빠질 수 없음)
+  if (ovr >= 80) {
+    if (importance >= 0.5) return 'starter';
+    // 낮은 중요도(35~50%)일 때 피로 60+면 벤치
+    if (fatigue >= 60 && Math.random() < 0.5) return 'bench';
+    return 'starter';
+  }
+  // OVR 70~79: 거의 주전
   if (ovr >= 70) {
     return clubStr - ovr > 15 ? 'bench' : 'starter';
   }
-  // OVR 60~69: 격차 따라 차등
+  // OVR 60~69
   if (ovr >= 60) {
     if (clubStr - ovr > 20) return 'absent_squad';
     if (clubStr - ovr > 10) return 'bench';

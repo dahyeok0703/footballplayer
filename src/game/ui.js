@@ -1535,7 +1535,7 @@ export function showPreMatchChoice(fixture, callback) {
 /* ============================================================
  *  하이라이트 선택형 매치 UI
  * ============================================================ */
-import { TACTICS, ROLES, determineStartingStatus } from '../engine/match.js';
+import { TACTICS, ROLES, determineStartingStatus, matchImportance } from '../engine/match.js';
 
 /* 경기 전 모달 — 전술 + 역할 + 출전 상태 */
 export function showPreMatchHighlightModal(fixture, player, callback) {
@@ -1579,8 +1579,9 @@ export function showPreMatchHighlightModal(fixture, player, callback) {
       <h3>⚽ ${compName} 경기 준비</h3>
       <p class="text-muted">${fixture.home ? '🏠' : '✈️'} vs <strong>${escapeHtml(fixture.oppName)}</strong> · 상대 강도 ${fixture.oppStr}</p>
       <p>출전 상태: <strong class="${status === 'starter' ? 'text-good' : 'text-warn'}">${status === 'starter' ? '⚽ 선발' : (subAvailable ? '🔄 교체 출전 가능' : '🪑 후보 (벤치)')}</strong></p>
-      <p>내 OVR: <strong>${ovr}</strong> · 사기: <strong>${player.morale}</strong>/100 · 부상위험: ${player.age > 30 ? '중' : '낮음'}</p>
-      ${status === 'bench' && !subAvailable ? '<p class="hint">⚠ 오늘은 교체 출전 기회 없음 — 팀 결과만 반영됩니다.</p>' : ''}
+      <p>매치 중요도: <strong class="${matchImportance(fixture) >= 0.85 ? 'text-bad' : (matchImportance(fixture) >= 0.6 ? 'text-warn' : 'text-good')}">${importanceLabel(matchImportance(fixture))}</strong></p>
+      <p>내 OVR: <strong>${ovr}</strong> · 사기: <strong>${player.morale}</strong>/100 · 피로: <strong class="${(player.fatigue || 0) >= 70 ? 'text-bad' : ((player.fatigue || 0) >= 40 ? 'text-warn' : 'text-good')}">${player.fatigue || 0}</strong>/100</p>
+      ${status === 'bench' && !subAvailable ? `<p class="hint">⚠ 감독이 ${(player.fatigue || 0) >= 50 ? '피로 누적으로 로테이션 — ' : ''}오늘은 출전 기회 없음. 팀 결과만 반영.</p>` : ''}
       ${subAvailable ? '<p class="text-info">💡 교체 출전 — 후반 30분 정도 출전. 평점 시작점 낮음.</p>' : ''}
 
       <h4 style="margin-top:14px;">감독 전술 선택</h4>
@@ -2054,6 +2055,11 @@ VIEWS.world = function renderWorldV2() {
       ` : ''}
 
       <div class="card wide">
+        <h3>📊 현재 진행 중인 다른 리그 (백그라운드 시뮬)</h3>
+        ${renderBgLeagueTables(s.world, s.player.leagueId, s.year)}
+      </div>
+
+      <div class="card wide">
         <h3>🗺 세계 축구 지도 (${LEAGUES.length}개 리그)</h3>
         ${Object.entries(byConf).map(([conf, leagues]) => `
           <h4>${CONFEDERATIONS[conf].name} — ${CONFEDERATIONS[conf].region} (${leagues.length}개)</h4>
@@ -2145,4 +2151,43 @@ function getLeagueCountry(leagueId) {
                  EGY:'🇪🇬', MAR:'🇲🇦', TUN:'🇹🇳', ALG:'🇩🇿', RSA:'🇿🇦', NGA:'🇳🇬', GHA:'🇬🇭', SEN:'🇸🇳', CIV:'🇨🇮', CMR:'🇨🇲',
                  NZL:'🇳🇿' }[l.code] || '🌍';
   return `${flag} ${l.country}`;
+}
+
+function importanceLabel(imp) {
+  if (imp >= 0.95) return '⭐⭐⭐⭐⭐ 절대적';
+  if (imp >= 0.85) return '⭐⭐⭐⭐ 매우 중요';
+  if (imp >= 0.70) return '⭐⭐⭐ 중요';
+  if (imp >= 0.50) return '⭐⭐ 보통';
+  return '⭐ 낮음 (로테이션 가능)';
+}
+
+/* ---------- 백그라운드 시뮬 중인 다른 리그 테이블 표시 ---------- */
+function renderBgLeagueTables(world, excludeLeagueId, year) {
+  if (!world.bgLeagueTables) return '<p class="hint">아직 시뮬 진행 데이터 없음 (몇 주 진행 후 갱신).</p>';
+  const tables = world.bgLeagueTables;
+  // 시즌별 톱 8 리그 (강도 기준)
+  const topLeagues = LEAGUES
+    .filter(l => l.id !== excludeLeagueId && tables[l.id] && tables[l.id]._year === year && l.strength >= 80)
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, 8);
+  if (topLeagues.length === 0) return '<p class="hint">진행 데이터 없음.</p>';
+  return `
+    <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); gap:14px;">
+      ${topLeagues.map(l => {
+        const tbl = tables[l.id];
+        const sorted = Object.values(tbl).filter(t => t.id).sort((a,b) => b.pts - a.pts || (b.gf - b.ga) - (a.gf - a.ga)).slice(0, 6);
+        return `
+          <div style="background:var(--bg-2); padding:10px; border-radius:6px;">
+            <strong>${escapeHtml(l.name)}</strong> <small class="text-muted">${l.country}</small>
+            <table class="table" style="margin-top:6px; font-size:0.8rem;">
+              <thead><tr><th>#</th><th>클럽</th><th class="num">경기</th><th class="num">승점</th></tr></thead>
+              <tbody>
+                ${sorted.map((t, i) => `<tr><td>${i+1}</td><td>${escapeHtml(t.name)}</td><td class="num">${t.played}</td><td class="num"><strong>${t.pts}</strong></td></tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
 }

@@ -729,6 +729,8 @@ function advanceOneDay(s) {
     // 자연 피로 회복 (주당 -10)
     s.player.fatigue = Math.max(0, (s.player.fatigue || 0) - 10);
     simulateOtherClubsLeagueRound(s);
+    // 백그라운드 세계 리그 시뮬 (톱 30 리그)
+    simulateBackgroundWorldLeagues(s);
     payWeeklyWage(s);
     processPendingPostComments(s).catch(() => {});
     generateWeeklyMediaActivity(s).catch(() => {});
@@ -816,6 +818,48 @@ function collectTodayEvents(s) {
   }
 
   return events;
+}
+
+/* ---------- 백그라운드 세계 리그 시뮬 ----------
+ *  매주 주차 전환 시 톱 30개 리그에서 1라운드 자동 시뮬
+ *  각 리그의 leagueTable이 시즌 내내 점진적으로 누적
+ */
+function simulateBackgroundWorldLeagues(state) {
+  const world = state.world;
+  if (!world.bgLeagueTables) world.bgLeagueTables = {};
+
+  // 본인 리그 외 톱 30 리그 (강도 순)
+  const topLeagues = LEAGUES
+    .filter(l => l.id !== state.player.leagueId && l.strength >= 65)
+    .sort((a, b) => b.strength - a.strength)
+    .slice(0, 30);
+
+  for (const league of topLeagues) {
+    const clubs = world.clubs[league.id];
+    if (!clubs || clubs.length < 2) continue;
+
+    // 시즌 시작 시 테이블 초기화
+    if (!world.bgLeagueTables[league.id] || world.bgLeagueTables[league.id]._year !== state.year) {
+      world.bgLeagueTables[league.id] = { _year: state.year };
+      clubs.forEach(c => {
+        world.bgLeagueTables[league.id][c.id] = { id: c.id, name: c.name, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, pts: 0 };
+      });
+    }
+    const tbl = world.bgLeagueTables[league.id];
+
+    // 모든 클럽 무작위로 짝지어 1라운드 시뮬
+    const shuffled = [...clubs].sort(() => Math.random() - 0.5);
+    for (let i = 0; i + 1 < shuffled.length; i += 2) {
+      const a = shuffled[i], b = shuffled[i + 1];
+      const ga = simGoalsSimple(a.strength, b.strength);
+      const gb = simGoalsSimple(b.strength, a.strength);
+      const tA = tbl[a.id], tB = tbl[b.id];
+      if (tA) { tA.played++; tA.gf += ga; tA.ga += gb;
+        if (ga > gb) { tA.won++; tA.pts += 3; } else if (ga < gb) tA.lost++; else { tA.drawn++; tA.pts++; } }
+      if (tB) { tB.played++; tB.gf += gb; tB.ga += ga;
+        if (gb > ga) { tB.won++; tB.pts += 3; } else if (gb < ga) tB.lost++; else { tB.drawn++; tB.pts++; } }
+    }
+  }
 }
 
 /* ---------- 본인 리그의 다른 클럽들 한 라운드 시뮬 ----------
