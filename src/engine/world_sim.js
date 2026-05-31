@@ -48,9 +48,10 @@ export function ageNpcPlayers(world) {
     const eliteByGroup = { GK: 0, DF: 0, MF: 0, FW: 0 };
     for (const p of club.players) {
       p.age = (p.age || 22) + 1;
-      // 클럽 강도 대비 인플레된 OVR/잠재력 정리
+      // 클럽 강도 대비 인플레된 OVR 정리 (현재 능력치만)
       if (p.ovr > clubMaxOvr) p.ovr = clubMaxOvr;
-      if (p.potential > clubMaxPot) p.potential = clubMaxPot;
+      // 잠재력은 25세 이상만 클럽 천장 적용 (어린 유망주는 다른 클럽 이적 후 만개 가능)
+      if (p.age >= 25 && p.potential > clubMaxPot) p.potential = clubMaxPot;
 
       // 은퇴 확률
       let retireProb = 0;
@@ -451,7 +452,7 @@ function analyzePositionsNeeded(club) {
 
 function findTargetForBuyer(world, buyer, budget, positionsNeeded) {
   const buyerStr = buyer.strength;
-  // 영입 OVR 범위: 본인 클럽 평균 -2 ~ +3
+  // 영입 OVR 범위: 본인 클럽 평균 -4 ~ +3
   const targetMin = buyerStr - 4;
   const targetMax = Math.min(maxOvrForClub(buyer), buyerStr + 3);
 
@@ -459,9 +460,12 @@ function findTargetForBuyer(world, buyer, budget, positionsNeeded) {
   const wantedGroup = positionsNeeded[Math.floor(Math.random() * positionsNeeded.length)];
 
   const candidates = [];
+  // 빅클럽(강도 85+)은 30% 확률로 \"유망주 스카우트 모드\" — 작은 클럽 유망주도 영입
+  const isYouthScoutMode = buyerStr >= 85 && Math.random() < 0.3;
+
   for (const league of LEAGUES) {
-    // 자기보다 더 강한 리그에서는 영입 안 함 (현실)
-    if (league.strength > buyerStr + 3) continue;
+    // 자기보다 강한 리그 안 함 (단, 유망주 스카우트는 모든 리그)
+    if (!isYouthScoutMode && league.strength > buyerStr + 3) continue;
     const clubs = world.clubs[league.id];
     if (!clubs) continue;
     for (const club of clubs) {
@@ -469,19 +473,26 @@ function findTargetForBuyer(world, buyer, budget, positionsNeeded) {
       if (!club.players) continue;
       for (const p of club.players) {
         if (groupOf(p.position) !== wantedGroup) continue;
-        if (p.ovr < targetMin || p.ovr > targetMax) continue;
-        if (p.age > 32 && p.ovr < 78) continue; // 늙은 평범한 선수는 안 삼
-        // 실제 스타 (real=true)는 빅→빅 이동만
-        if (p.real && buyerStr < 85) continue;
-        candidates.push({ player: p, sellerClub: club });
+        if (p.age > 32 && p.ovr < 78) continue; // 늙은 평범한 선수 안 삼
+        if (p.real && buyerStr < 85) continue; // 실제 스타는 빅→빅 이동만
+
+        // 일반 영입: 현재 OVR 기준
+        const inOvrRange = p.ovr >= targetMin && p.ovr <= targetMax;
+        // 유망주 스카우트: 21세 이하 + 잠재력 (현재 클럽 천장) - buyer 천장 -10 이상
+        const isHighPotential = p.age <= 21 && p.potential >= targetMin + 5;
+
+        if (inOvrRange || (isYouthScoutMode && isHighPotential)) {
+          candidates.push({ player: p, sellerClub: club, isYouth: isHighPotential && !inOvrRange });
+        }
       }
     }
   }
   if (candidates.length === 0) return null;
   const picked = candidates[Math.floor(Math.random() * candidates.length)];
-  // 이적료
-  const ageMul = picked.player.age <= 22 ? 1.5 : (picked.player.age <= 27 ? 1.2 : (picked.player.age <= 30 ? 0.9 : 0.6));
-  const fee = Math.round(picked.player.ovr * picked.player.ovr * (1 + Math.random() * 0.5) * ageMul * 0.5);
+  // 이적료 — 유망주는 잠재력 기반, 일반은 OVR 기반
+  const baseStat = picked.isYouth ? picked.player.potential : picked.player.ovr;
+  const ageMul = picked.player.age <= 21 ? 1.6 : (picked.player.age <= 27 ? 1.2 : (picked.player.age <= 30 ? 0.9 : 0.6));
+  const fee = Math.round(baseStat * baseStat * (1 + Math.random() * 0.5) * ageMul * 0.5);
   if (fee > budget) return null;
   return { ...picked, fee };
 }

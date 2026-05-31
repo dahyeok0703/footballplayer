@@ -234,7 +234,10 @@ export function generateClubRoster(club) {
       maxOvr: maxOvrP,
       position: positions[i]
     });
-    if (p.potential > clubMaxPot) p.potential = clubMaxPot;
+    // 잠재력 천장은 어린 선수만 완화 (Salah-at-Basel 시나리오 가능하게)
+    // 어린 선수(21세 이하)는 잠재력을 그대로 유지 → 작은 클럽 유망주가 빅클럽 영입 후 만개
+    // 28세 이상은 클럽 천장 적용 (이미 성장 끝남)
+    if (p.age >= 25 && p.potential > clubMaxPot) p.potential = clubMaxPot;
     if (p.ovr > p.potential) p.ovr = p.potential;
 
     if (p.ovr >= 88) eliteByGroup[grp]++;

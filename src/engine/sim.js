@@ -352,6 +352,10 @@ export function recordMatch(state, fixture, result) {
   // 사기
   state.player.morale = clamp(state.player.morale + (result.rating - 6.5) * 3, 20, 100);
 
+  // 매치 피로 누적 (한 경기당 +8~12, 나이 많을수록 더)
+  const matchFatigue = 8 + Math.floor(Math.random() * 5) + (state.player.age >= 30 ? 4 : 0);
+  state.player.fatigue = clamp((state.player.fatigue || 0) + matchFatigue, 0, 100);
+
   // 부상
   if (result.injury > 0) {
     state.player.injury = result.injury;

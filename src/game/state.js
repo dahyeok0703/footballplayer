@@ -340,12 +340,17 @@ export const game = {
       const newLeagueId = offseason.promotionRelegation.userNewLeagueId;
       const newLeagueObj = getLeague(newLeagueId);
       if (newLeagueObj) {
-        // 승격 = 새 리그 tier가 더 낮음 (tier 1이 더 상위), 강등 = 새 리그 tier가 더 높음
         if (newLeagueObj.tier < oldLeague.tier) seasonReport.userPromoted = true;
         else if (newLeagueObj.tier > oldLeague.tier) seasonReport.userRelegated = true;
         player.leagueId = newLeagueId;
         player.country = newLeagueObj.country;
       }
+    }
+    // 본인 클럽 강도 재동기화 (NPC 이적/승강으로 변경됐을 수 있음)
+    const myCurrentClub = (s.world.clubs[player.leagueId] || []).find(c => c.id === player.clubId);
+    if (myCurrentClub) {
+      player.clubStrength = myCurrentClub.strength;
+      player.clubName = myCurrentClub.name;
     }
 
     // 이적 오퍼는 이적시장(여름/겨울)에 분산 도착함 — 시즌 종료 시 자동 생성 안 함
@@ -360,19 +365,29 @@ export const game = {
     }
 
     // 임대 만료 처리 — 모 클럽 복귀 + 갱신 오퍼 가능성
+    // (NOTE: runOffseasonSim 직후이므로 모 클럽이 승강됐을 수도 있음 → 새 leagueId 검색)
     let loanReturnInfo = null;
     if (player.isOnLoan && player.loanFrom) {
       const loanedToClubId = player.clubId;
       const loanedToLeagueId = player.leagueId;
       const loanedToClubName = player.clubName;
 
-      // 모 클럽으로 복귀
-      const parentLeague = getLeague(player.loanFrom.leagueId);
-      const parentClubs = s.world.clubs[player.loanFrom.leagueId] || [];
-      const parentClub = parentClubs.find(c => c.id === player.loanFrom.clubId);
+      // 모 클럽 검색 — 모든 리그에서 찾기 (승강 후일 수 있음)
+      let parentClub = null;
+      let parentClubCurrentLeagueId = player.loanFrom.leagueId;
+      for (const lid of Object.keys(s.world.clubs)) {
+        const found = s.world.clubs[lid].find(c => c.id === player.loanFrom.clubId);
+        if (found) {
+          parentClub = found;
+          parentClubCurrentLeagueId = lid;
+          break;
+        }
+      }
+
       player.clubId = player.loanFrom.clubId;
       player.clubName = player.loanFrom.clubName;
-      player.leagueId = player.loanFrom.leagueId;
+      player.leagueId = parentClubCurrentLeagueId;
+      const parentLeague = getLeague(parentClubCurrentLeagueId);
       if (parentClub) player.clubStrength = parentClub.strength;
       if (parentLeague) player.country = parentLeague.country;
       player.salary = player.loanFrom.salary || player.salary;
@@ -452,9 +467,10 @@ export const game = {
       return { ...offer, joinedImmediately: true };
     } else {
       // 사전 계약: pendingTransfer로 저장, 다른 모든 오퍼 제거
-      s.pendingTransfer = { offer, joinDate };
-      // 사이닝 보너스 즉시 지급
+      // 사이닝 보너스 즉시 지급 + 중복 지급 방지 마커
+      offer._signOnPaid = true;
       s.player.money += offer.signOn || 0;
+      s.pendingTransfer = { offer, joinDate };
       s.offers = []; // 다른 오퍼 모두 거절 (이미 계약 합의)
       return { ...offer, joinedImmediately: false };
     }
@@ -548,7 +564,12 @@ export const game = {
     s.player.country = newLeague.country;
     s.player.salary = offer.wage;
     s.player.contractYears = offer.years;
-    s.player.money += Math.round(offer.signOn || 0);
+    // 사이닝 보너스는 즉시 이적(isImmediate)일 때만 여기서 지급
+    // 지연 이적은 acceptOffer에서 사전 지급되므로 중복 방지
+    if (!offer._signOnPaid) {
+      s.player.money += Math.round(offer.signOn || 0);
+      offer._signOnPaid = true;
+    }
 
     // 새 일정 재생성
     const estRank = Math.max(1, Math.round((100 - newClub.strength) / 4));

@@ -413,6 +413,17 @@ function processOfferArrival(ev) {
   const offer = generateOneOffer(s);
   if (offer) {
     s.offers = s.offers || [];
+    // 같은 클럽에서 이미 미수락 오퍼가 있으면 스킵 (중복 방지)
+    const existingFromSameClub = s.offers.find(o => o.clubId === offer.clubId && !o.withdrawn);
+    if (existingFromSameClub) {
+      s.scheduledEvents = s.scheduledEvents.filter(e => e !== ev.scheduledEvent);
+      return;
+    }
+    // 본인 클럽 오퍼는 의미 없음
+    if (offer.clubId === s.player.clubId) {
+      s.scheduledEvents = s.scheduledEvents.filter(e => e !== ev.scheduledEvent);
+      return;
+    }
     s.offers.push(offer);
     const windowLabel = ev.window === 'summer' ? '여름' : (ev.window === 'winter' ? '겨울' : '');
     game.log_(`📩 ${windowLabel ? `[${windowLabel} 이적시장] ` : ''}${offer.clubName}에서 이적 제안! (${offer.roleLabel}) — \"이적\" 메뉴 확인`, 'event');
